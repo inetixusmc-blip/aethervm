@@ -4,7 +4,9 @@ Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gem
 
 ## Status
 
-Source implementation, not a deployed service or a signed APK. Google login, real Gemini calls, and real sandbox creation require your provider configuration. Unit tests cover authentication, ownership, tool quoting and a mocked full agent flow. Native Android bundling and TypeScript are checked when packaging; live provider integration has not been tested with account credentials.
+The 0.2.0 Android preview uses persistent agent profiles, separate conversations, a dedicated computer surface, files, terminal, skills and secure Gemini configuration. The personal backend is deployed at `https://aethervm-api.onrender.com` on Render Free with Turso persistence. GitHub Actions builds the ARM64 preview APK; download `AetherVM-preview-apk` from the latest successful run for the mobile changes, extract it and install `app-release.apk` over the existing preview.
+
+This remains a personal preview. Profiles share the account's existing Daytona computer. Scheduled automation and parallel agents are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
 
 ## 1. Configure Google login
 
@@ -25,11 +27,11 @@ cp .env.example .env
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Use one API process: the task executor and cancellation flags are process-local. SQLite persists accounts' workspace mappings, messages and task traces. Restarted jobs become interrupted. Put the service behind HTTPS (a reverse proxy or a tunnel); Android app intentionally requires an HTTPS URL. Keep the SQLite file private and backed up. Google sessions expire after seven days; sign out revokes the current session. Gemini keys are kept in Android SecureStore and transient backend memory, not SQLite. Prompts, tool arguments and command output are saved in SQLite, so do not place secrets in task text.
+Use one API process: the task executor and cancellation flags are process-local. SQLite or configured Turso libSQL persists accounts' workspace mappings, profiles, memory, skills, messages and task traces. Restarted jobs become interrupted. Put the service behind HTTPS (a reverse proxy or a tunnel); Android app intentionally requires an HTTPS URL. Keep the SQLite file private and backed up. Google sessions expire after seven days; sign out revokes the current session. Gemini keys are kept in Android SecureStore and transient backend memory, not SQLite. Prompts, tool arguments and command output are saved in SQLite, so do not place secrets in task text.
 
 ### Daytona (default)
 
-Create an account at https://app.daytona.io and generate an API key. Set `DAYTONA_API_KEY`, `DAYTONA_API_URL=https://app.daytona.io/api`, `SANDBOX_PROVIDER=daytona` in backend `.env`. Each account receives its own sandbox, with a 5-minute idle auto-stop. Stopped sandbox disk may still incur charges. Use the app's Stop workspace button to stop compute after a task. You can specify `DAYTONA_SNAPSHOT` with browser dependencies installed; otherwise ask the agent to install `playwright` and Chromium before using the browser tool. Provider snapshot permissions determine whether system packages can be installed.
+Create an account at https://app.daytona.io and generate an API key. Set `DAYTONA_API_KEY`, `DAYTONA_API_URL=https://app.daytona.io/api`, `SANDBOX_PROVIDER=daytona` in backend `.env`. Each account receives its own sandbox, with a 5-minute idle auto-stop. Stopped sandbox disk may still incur charges. Use the app's Put computer to sleep button to stop compute after a task. The standard Daytona image includes the desktop dependencies. Custom `DAYTONA_SNAPSHOT` images must provide those dependencies. The separate headless browse tool may require Playwright and Chromium installation. Provider snapshot permissions determine whether system packages can be installed.
 
 Daytona manages independent sandboxes; this app does not claim that Daytona splits a single rented VM into unlimited free workspaces.
 
@@ -69,13 +71,17 @@ EAS needs your Expo account and available build quota. When Google Android OAuth
 
 ## App features
 
-- Dark mobile interface with chat, command activity, workspace files and settings.
+- Restrained dark interface with a persistent agent roster, focused conversation and dedicated Computer surface on mobile. Wider screens show a fixed roster and optional computer panel.
+- Create and edit named agents with roles, instructions, avatars and persistent memory. Each agent has separate conversations and task history; the account shares one computer.
 - Google identity verified on the server; ownership checked on every private endpoint.
-- Live task polling with tool arguments/results and bounded 24-step agent loops.
-- Stop task requests stop after the current command (60-second timeout) or model request (90-second timeout). Cancelling does not undo actions or necessarily stop background processes the agent started.
-- Conversation persistence, encrypted local key storage, new conversation without deleting workspace files.
-- Browse reads rendered pages; more complex browser clicks and screenshots can be scripted through the shell using Playwright. No live desktop/video viewer in this version.
-- File list is the top level of `/workspace`. Ask the agent to inspect nested directories. No attachment upload/download UI yet.
+- Markdown responses, copyable code, concise activity cards, expandable technical details, and explicit waiting/error/cancelled states.
+- Daytona desktop screenshots, visible browser launch, mouse/keyboard actions, and exclusive manual/agent control. A disconnected manual-control lease expires automatically.
+- Navigate workspace folders, preview and export files, and attach files up to 4 MB. Bounded terminal commands expose real output and exit status.
+- Gemini key stored in Android SecureStore, connection testing and available-model selection. Keys remain transient on the backend, outside the database.
+- Saved skills become agent instructions. Scheduled runs are clearly unavailable in this version.
+- Restores server conversations and tasks after reopening the app. Free-host cold starts use a longer request timeout with readable errors.
+- Stop requests take effect after the current bounded command or model request. Cancellation does not undo completed actions or necessarily stop background processes.
+- Docker provides shell/files; the desktop viewer requires the Daytona provider.
 
 ## Free hosting research — checked 5 October 2026
 
@@ -107,4 +113,4 @@ Do not enable `DEV_AUTH=true` on an accessible server. It is a local test-only a
 
 See `DEPLOYMENT.md` for the selected Render Free + Turso Free libSQL route. `render.yaml` defines the service. The API supports `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` for durable remote storage on ephemeral hosts, and `ALLOWED_GOOGLE_EMAILS` restricts the personal deployment. Current examples contain the configured public Google Web client ID; no private provider credentials are shipped.
 
-The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow is prepared but has not been run on your GitHub account.
+The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.2.0.
