@@ -5,8 +5,8 @@
 - 15 backend pytest checks pass, covering authentication/revocation, account and agent ownership, input validation, shell quoting, a mocked Gemini tool loop, libSQL adapter behavior, account allowlisting, per-agent history/memory/skills, exclusive computer control, read-only status, workspace path validation, screenshot dimensions and waiting status for human handoffs.
 - Strict TypeScript typecheck passes.
 - Final Android Hermes production export passes: 822 modules, 2.34 MB bundle.
-- Native GitHub Actions builds for the initial redesign and version 0.2.0 passed. The final layout/handoff refinement build is tracked in Actions run 37362936734; check its final status and artifact before distributing.
-- Render reports the persistent-agent backend commit live. The final handoff correction is also live from commit af96659 (38.4-second deployment).
+- The final native Android build passed in GitHub Actions run 37362936734: Gradle BUILD SUCCESSFUL in 9m 52s. AetherVM-preview-apk uploaded successfully (12,372,312-byte ZIP, artifact 11368330240). This APK includes the final layout/handoff UI refinements from eda45c9.
+- Render reports the persistent-agent backend commit live. The handoff-status correction is live from af96659. The enforced immediate handoff pause is live from 8d3c8b7, preventing subsequent model/tool calls until the user responds.
 - Static document rendering of the actual React Native Web component tree was visually inspected at 360/390 px phone widths, 834 px tablet width and 1366/1920/2560 px desktop widths. These are approximate layout checks, not native screenshots. The sidebar flex sizing was corrected.
 - Package remains `com.aethervm.app`, version code 2. Preview certificate SHA-1 remains `ED:7A:D7:76:69:A5:36:12:40:D1:26:DB:A8:91:AA:8E:45:CF:7B:B3`.
 - The user previously confirmed Google login and backend connectivity worked in the earlier installed preview.

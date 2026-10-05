@@ -67,7 +67,7 @@ npx eas-cli build:configure
 npx eas-cli build --platform android --profile preview
 ```
 
-EAS needs your Expo account and available build quota. When Google Android OAuth asks for SHA-1, use the signing certificate of the resulting build (EAS credentials or your local debug certificate). Rebuild after changing public environment variables. Install the APK, open Settings, enter the HTTPS backend address and Gemini key, save, then sign in with Google. Pick a Gemini model available to your API key by entering its model ID; the default is `gemini-2.5-flash`.
+EAS needs your Expo account and available build quota. When Google Android OAuth asks for SHA-1, use the signing certificate of the resulting build (EAS credentials or your local debug certificate). Rebuild after changing public environment variables. Install the APK, sign in with Google, then open Settings and enter your Gemini key. Use Test connection to load the models accessible to that key and choose one. The deployed HTTPS backend address is already configured; Advanced settings can point the app to a different server.
 
 ## App features
 
@@ -113,4 +113,4 @@ Do not enable `DEV_AUTH=true` on an accessible server. It is a local test-only a
 
 See `DEPLOYMENT.md` for the selected Render Free + Turso Free libSQL route. `render.yaml` defines the service. The API supports `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` for durable remote storage on ephemeral hosts, and `ALLOWED_GOOGLE_EMAILS` restricts the personal deployment. Current examples contain the configured public Google Web client ID; no private provider credentials are shipped.
 
-The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.2.0.
+The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.2.0. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.
