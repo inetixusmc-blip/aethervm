@@ -38,6 +38,9 @@ class DaytonaSandbox:
     def execute(self, command):
         r = self.box.process.exec('timeout -k 5 60 bash -lc ' + shlex.quote('cd /workspace && '+command), timeout=70)
         return {'exit_code':r.exit_code, 'output':r.result[:24000]}
+    def computer(self): return self.box.computer_use
+    def read_bytes(self,path): return self.box.fs.download_file(path)
+    def write_bytes(self,data,path): return self.box.fs.upload_file(data,path)
     def stop(self): self.client.stop(self.box)
     def delete(self): self.client.delete(self.box)
 
@@ -67,4 +70,57 @@ with sync_playwright() as p:
  b.close()
 '''
         return box.execute(python_command(source))
+    if name.startswith('computer_') or name=='browser_open':
+        if not hasattr(box,'computer'): return {'error':'Desktop tools unavailable for this provider'}
+        cu=box.computer(); cu.start()
+        if name=='computer_screenshot':
+            return capture_screen(cu)
+        if name=='computer_click': cu.mouse.click(int(args['x']),int(args['y']))
+        elif name=='computer_type': cu.keyboard.type(args['text'])
+        elif name=='computer_key': press_key(cu,args['key'])
+        elif name=='browser_open':
+            import urllib.parse
+            url=args['url']
+            if urllib.parse.urlparse(url).scheme not in ('https','http'): raise ValueError('Use an HTTP or HTTPS address')
+            # The visible browser keeps its profile on sandbox disk between tasks.
+            return box.execute('DISPLAY=:0 nohup sh -c '+shlex.quote('exec $(command -v chromium || command -v chromium-browser || command -v google-chrome) --no-sandbox --user-data-dir=/workspace/.browser '+shlex.quote(url))+' >/tmp/aether-browser.log 2>&1 & sleep 1; cat /tmp/aether-browser.log | tail -3')
+        return {'ok':True}
     raise ValueError('Unknown tool')
+
+def sandbox_state(sandbox_id):
+    if os.getenv('SANDBOX_PROVIDER','daytona')=='daytona':
+        from daytona import Daytona
+        return str(Daytona().get(sandbox_id).state).lower().split('.')[-1]
+    r=subprocess.run(['docker','inspect','--format','{{.State.Running}}',sandbox_id],capture_output=True,text=True)
+    return 'started' if r.stdout.strip()=='true' else 'stopped'
+
+def existing_sandbox(sandbox_id):
+    # Read-only access: unlike provisioning, screen polling never restarts a stopped computer.
+    if os.getenv('SANDBOX_PROVIDER','daytona')!='daytona': raise RuntimeError('Desktop unavailable')
+    from daytona import Daytona
+    box=object.__new__(DaytonaSandbox)
+    box.client=Daytona(); box.box=box.client.get(sandbox_id); box.id=sandbox_id
+    return box
+
+def docker_read(self,path):
+    r=subprocess.run(['docker','exec',self.id,'python3','-c',f"import sys; sys.stdout.buffer.write(open({path!r},'rb').read())"],capture_output=True,timeout=30,check=True)
+    return r.stdout
+def docker_write(self,data,path):
+    subprocess.run(['docker','exec','-i',self.id,'python3','-c',f"import sys; open({path!r},'wb').write(sys.stdin.buffer.read())"],input=data,capture_output=True,timeout=30,check=True)
+DockerSandbox.read_bytes=docker_read
+DockerSandbox.write_bytes=docker_write
+
+
+def capture_screen(cu):
+    import base64,struct
+    shot=cu.screenshot.take_full_screen()
+    image=shot.screenshot or ''
+    if image.startswith('data:'): image=image.split(',',1)[1]
+    data=base64.b64decode(image)
+    if data[:8]!=b'\x89PNG\r\n\x1a\n': raise RuntimeError('Desktop did not return a PNG image')
+    width,height=struct.unpack('>II',data[16:24])
+    return {'image':image,'width':width,'height':height}
+
+def press_key(cu,key):
+    parts=key.split('+')
+    cu.keyboard.press(parts[-1],modifiers=parts[:-1] or None)
