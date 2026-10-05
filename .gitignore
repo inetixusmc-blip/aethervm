@@ -1,0 +1,13 @@
+.env
+node_modules/
+.expo/
+__pycache__/
+*.sqlite3
+.venv/
+android/local.properties
+android/.gradle/
+android/**/build/
+mobile/android/local.properties
+.gradle/
+build/
+dist/

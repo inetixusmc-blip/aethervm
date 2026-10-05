@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "AetherVM",
+    "slug": "aethervm",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.aethervm.app"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "@react-native-google-signin/google-signin",
+      "expo-font"
+    ]
+  }
+}

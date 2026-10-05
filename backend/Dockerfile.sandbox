@@ -1,0 +1,4 @@
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
+RUN pip install --no-cache-dir playwright==1.55.0 && apt-get update && apt-get install -y --no-install-recommends git curl sudo nodejs npm && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

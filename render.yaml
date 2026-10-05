@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: aethervm-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: GOOGLE_WEB_CLIENT_ID
+        value: 636307355753-srlt103so2e3d1encolqo0nq1tjrtk2v.apps.googleusercontent.com
+      - key: SANDBOX_PROVIDER
+        value: daytona
+      - key: DAYTONA_API_URL
+        value: https://app.daytona.io/api
+      - key: DAYTONA_API_KEY
+        sync: false
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: DEV_AUTH
+        value: false
+      - key: ALLOWED_GOOGLE_EMAILS
+        value: inetixus@gmail.com
