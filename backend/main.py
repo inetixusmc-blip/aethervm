@@ -131,6 +131,7 @@ def run(job,user,body):
         client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=90000))
         with db() as c: saved_skills=[dict(r) for r in c.execute('SELECT name,instructions FROM skills WHERE user=? AND agent_id=?',(user,agent['id']))]
         context=SYSTEM+f"\nYour name is {agent['name']}. Your role is {agent['role']}. Responsibilities: {agent['instructions']}\nSaved memory: {agent['memory']}\nReusable skills: {json.dumps(saved_skills)}"
+        waiting_for_user=False
         for _ in range(24):
             if cancelled[job].is_set(): break
             response=client.models.generate_content(model=body.model,contents=contents,config=types.GenerateContentConfig(system_instruction=context,tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=4096))
@@ -153,7 +154,10 @@ def run(job,user,body):
                             with db() as c: c.execute('UPDATE agents SET memory=? WHERE user=? AND id=?',(memory,user,agent['id']))
                             output={'saved':True}
                         elif call.name=='request_user_control':
-                            emit(job,{'kind':'attention','text':str((call.args or {}).get('reason','Your help is needed.'))[:1000]})
+                            reason=str((call.args or {}).get('reason','Your help is needed.'))[:1000]
+                            emit(job,{'kind':'attention','text':reason})
+                            emit(job,{'kind':'text','text':reason})
+                            waiting_for_user=True
                             output={'waiting_for_user':True}
                         else: output=tool(box,call.name,dict(call.args or {}))
                 except Exception as exc: output={'error':str(exc)[:2000]}
@@ -161,7 +165,9 @@ def run(job,user,body):
                 emit(job,{'kind':'result','text':json.dumps(output)})
                 if image_data: results.append(types.Part.from_bytes(data=base64.b64decode(image_data),mime_type='image/png'))
                 results.append(types.Part(function_response=types.FunctionResponse(name=call.name,id=call.id,response=output)))
+                if waiting_for_user: break
             if results: contents.append(types.Content(role='user',parts=results))
+            if waiting_for_user: break
         else: emit(job,{'kind':'text','text':'Reached the 24-step limit. Send another message to continue.'})
         with db() as c:
             events=json.loads(c.execute('SELECT events FROM jobs WHERE id=?',(job,)).fetchone()[0])
