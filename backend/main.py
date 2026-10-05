@@ -167,7 +167,7 @@ def run(job,user,body):
             events=json.loads(c.execute('SELECT events FROM jobs WHERE id=?',(job,)).fetchone()[0])
             answer='\n'.join(e['text'] for e in events if e['kind']=='text')
             if answer: c.execute('INSERT INTO messages(user,role,text,agent_id,created) VALUES(?,?,?,?,?)',(user,'assistant',answer,agent['id'],time.time()))
-            c.execute('UPDATE jobs SET status=? WHERE id=?',('cancelled' if cancelled[job].is_set() else 'done',job))
+            c.execute('UPDATE jobs SET status=? WHERE id=?',('cancelled' if cancelled[job].is_set() else 'waiting' if any(e['kind']=='attention' for e in events) else 'done',job))
     except Exception as exc:
         # Never persist provider exceptions that could contain request keys.
         error=f'{type(exc).__name__}: Task failed. Check model access, key, sandbox configuration and provider quota.'
@@ -198,7 +198,7 @@ def task(body:Task,user=Depends(current_user)):
 def get_task(job:str,user=Depends(current_user)):
     with db() as c: row=c.execute('SELECT * FROM jobs WHERE id=? AND user=?',(job,user)).fetchone()
     if not row: raise HTTPException(404,'Task not found')
-    return {'id':job,'agent_id':row['agent_id'],'created':row['created'],'status':row['status'],'events':json.loads(row['events']),'error':row['error']}
+    return {'id':job,'agent_id':row['agent_id'],'created':row['created'],'status':row['status'],'events':json.loads(row['events']),'error':row['error'],'control':'user' if user_controls(user) else 'agent'}
 @app.post('/tasks/{job}/cancel')
 def cancel(job:str,user=Depends(current_user)):
     get_task(job,user)
