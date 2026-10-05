@@ -134,8 +134,9 @@ def test_human_request_is_not_a_completed_task(monkeypatch):
         count=0
         def generate_content(self,**kwargs):
             self.count+=1
-            part=types.Part(function_call=types.FunctionCall(name='request_user_control',args={'reason':'Finish the website login.'},id='help1')) if self.count==1 else types.Part(text='Please open my computer to finish signing in.')
-            return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role='model',parts=[part]))])
+            assert self.count==1, 'A human handoff must stop further model calls'
+            parts=[types.Part(function_call=types.FunctionCall(name='request_user_control',args={'reason':'Finish the website login.'},id='help1')),types.Part(function_call=types.FunctionCall(name='run_shell',args={'command':'echo should-not-run'},id='shell1'))]
+            return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role='model',parts=parts))])
     class Client:
         def __init__(self,**kwargs):self.models=Models()
         def close(self):pass
@@ -149,3 +150,5 @@ def test_human_request_is_not_a_completed_task(monkeypatch):
         time.sleep(.01)
     assert result['status']=='waiting'
     assert any(e['kind']=='attention' for e in result['events'])
+    assert not any(e.get('name')=='run_shell' for e in result['events'])
+    assert client.get('/messages',headers=h).json()[-1]['text']=='Finish the website login.'
