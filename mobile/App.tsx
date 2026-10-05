@@ -32,6 +32,7 @@ import Svg, { Path, Rect, Circle, Line } from "react-native-svg";
 import Markdown from "react-native-markdown-display";
 
 type Job = {
+  control?: string;
   id: string;
   status: string;
   error?: string;
@@ -491,6 +492,77 @@ function eventLabel(e?: TaskEvent) {
   }
   return "Working";
 }
+function CopyAction({ text, code = false }: { text: string; code?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        copied ? "Copied" : code ? "Copy code" : "Copy response"
+      }
+      style={{
+        minHeight: 44,
+        minWidth: 44,
+        flexDirection: "row",
+        gap: 6,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onPress={async () => {
+        await Clipboard.setStringAsync(text);
+        setCopied(true);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => setCopied(false), 1800);
+      }}
+    >
+      <Icon
+        name={copied ? "check" : "copy"}
+        size={15}
+        color={copied ? C.green : C.muted}
+      />
+      {code && <Text style={s.tiny}>{copied ? "Copied" : "Copy code"}</Text>}
+    </Pressable>
+  );
+}
+function CodeBlock({ text, language }: { text: string; language?: string }) {
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: C.line,
+        borderRadius: 10,
+        backgroundColor: C.surface,
+        marginBottom: 14,
+        overflow: "hidden",
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: 14,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderColor: C.line,
+        }}
+      >
+        <Text style={[s.tiny, { flex: 1 }]}>{language || "Code"}</Text>
+        <CopyAction text={text} code />
+      </View>
+      <ScrollView horizontal>
+        <Text selectable style={[s.codeText, { padding: 14 }]}>
+          {text.trimEnd()}
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
 const MessageView = memo(
   ({
     message,
@@ -526,6 +598,18 @@ const MessageView = memo(
               <Text style={s.messageTime}>{timeLabel(message.created)}</Text>
             </View>
             <Markdown
+              rules={{
+                fence: (node: any) => (
+                  <CodeBlock
+                    key={node.key}
+                    text={node.content}
+                    language={node.sourceInfo}
+                  />
+                ),
+                code_block: (node: any) => (
+                  <CodeBlock key={node.key} text={node.content} />
+                ),
+              }}
               style={markdownStyles}
               onLinkPress={(url) => {
                 if (
@@ -553,11 +637,7 @@ const MessageView = memo(
               />
             ))}
             <View style={s.messageActions}>
-              <IconButton
-                name="copy"
-                label="Copy response"
-                onPress={() => Clipboard.setStringAsync(message.text)}
-              />
+              <CopyAction text={message.text} />
             </View>
           </>
         )}
@@ -1030,18 +1110,21 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       setBusy("");
     }
   };
-  const previewFile = async (path: string) => {
-    setBusy("file");
-    try {
-      setFilePreview(
-        await api("/workspace/file?path=" + encodeURIComponent(path)),
-      );
-    } catch (e) {
-      report(e, "Could not open this file");
-    } finally {
-      setBusy("");
-    }
-  };
+  const previewFile = useCallback(
+    async (path: string) => {
+      setBusy("file");
+      try {
+        setFilePreview(
+          await api("/workspace/file?path=" + encodeURIComponent(path)),
+        );
+      } catch (e) {
+        report(e, "Could not open this file");
+      } finally {
+        setBusy("");
+      }
+    },
+    [api, report],
+  );
   const downloadFile = async () => {
     if (!filePreview) return;
     setBusy("download");
@@ -1101,9 +1184,14 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     }
   };
   const inspectedJob = activityJob || job;
-  const currentAction = eventLabel(
-    job?.events?.filter((e) => e.kind === "status" || e.kind === "tool").at(-1),
-  );
+  const currentAction =
+    job?.control === "user"
+      ? "Waiting for you to hand control back"
+      : eventLabel(
+          job?.events
+            ?.filter((e) => e.kind === "status" || e.kind === "tool")
+            .at(-1),
+        );
   const liveText =
     job?.status === "running"
       ? job.events
@@ -1124,7 +1212,14 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     <SafeAreaView
       style={[
         s.roster,
-        desktop && { width: 272, borderRightWidth: 1, borderColor: C.line },
+        desktop && {
+          width: 272,
+          flexGrow: 0,
+          flexShrink: 0,
+          flexBasis: 272,
+          borderRightWidth: 1,
+          borderColor: C.line,
+        },
       ]}
     >
       <View style={s.rosterHead}>
@@ -1189,6 +1284,9 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 {a.job?.status === "running" && (
                   <Text style={[s.tiny, { color: C.green }]}>Working</Text>
                 )}
+                {a.job?.status === "waiting" && (
+                  <Text style={[s.tiny, { color: C.amber }]}>Needs you</Text>
+                )}
                 {a.job?.status === "error" && (
                   <Icon name="alert" size={14} color={C.amber} />
                 )}
@@ -1196,9 +1294,11 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               <Text numberOfLines={1} style={s.caption}>
                 {a.role}
               </Text>
-              <Text numberOfLines={1} style={[s.tiny, { marginTop: 5 }]}>
-                {a.preview}
-              </Text>
+              {!!a.preview && a.preview !== a.role && (
+                <Text numberOfLines={1} style={[s.tiny, { marginTop: 5 }]}>
+                  {a.preview}
+                </Text>
+              )}
             </View>
           </Pressable>
         ))}
@@ -1711,7 +1811,9 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                           ? offline
                             ? "Reconnecting…"
                             : currentAction
-                          : agent?.role}
+                          : job?.status === "waiting"
+                            ? "Needs your help"
+                            : agent?.role}
                     </Text>
                   )}
                 </View>
@@ -2170,11 +2272,13 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 title={
                   j.status === "done"
                     ? "Task completed"
-                    : j.status === "running"
-                      ? "In progress"
-                      : j.status === "cancelled"
-                        ? "Task stopped"
-                        : "Task interrupted"
+                    : j.status === "waiting"
+                      ? "Needs your help"
+                      : j.status === "running"
+                        ? "In progress"
+                        : j.status === "cancelled"
+                          ? "Task stopped"
+                          : "Task interrupted"
                 }
                 subtitle={
                   j.created
@@ -2934,6 +3038,7 @@ const s = StyleSheet.create({
     borderRadius: 10,
   },
   agentRow: {
+    minHeight: 74,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -3313,12 +3418,18 @@ const s = StyleSheet.create({
     alignSelf: "center",
   },
   loginBrand: {
+    minHeight: 80,
     flexDirection: "row",
     gap: 11,
     alignItems: "center",
     paddingTop: 29,
   },
-  loginBody: { flex: 1, justifyContent: "center", paddingBottom: 40 },
+  loginBody: {
+    minHeight: 470,
+    flex: 1,
+    justifyContent: "center",
+    paddingBottom: 40,
+  },
   loginAvatars: {
     flexDirection: "row",
     gap: 13,
