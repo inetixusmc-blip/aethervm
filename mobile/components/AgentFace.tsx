@@ -19,6 +19,8 @@ import Svg, {
   Stop,
   Path,
   Ellipse,
+  Rect,
+  Circle,
 } from "react-native-svg";
 
 export const MotionContext = createContext(true);
@@ -268,46 +270,30 @@ export default memo(function AgentFace({
             />
           )}
         </Svg>
-        <Animated.View
-          style={{
-            position: "absolute",
-            left: 19,
-            width: 27,
-            height: 14,
-            top: eyesY,
-            flexDirection: "row",
-            gap: 12,
-            transform: look.getTranslateTransform(),
-          }}
-        >
-          {[0, 1].map((i) => (
-            <Animated.View
-              key={i}
-              style={{
-                width: 7.5,
-                flexShrink: 0,
-                height: mood === "working" ? 11 : 13,
-                borderRadius: 5,
-                backgroundColor: ink,
-                transform: [
-                  { scaleY: i === 0 && wink ? 1 : blink },
-                  { rotate: i === 0 ? "5deg" : "-5deg" },
-                ],
-              }}
-            >
-              <View
-                style={{
-                  width: 1.9,
-                  height: 2.4,
-                  borderRadius: 2,
-                  backgroundColor: "#FFFFFF80",
-                  marginLeft: 1.8,
-                  marginTop: 2,
-                }}
-              />
-            </Animated.View>
-          ))}
-        </Animated.View>
+        {[0, 1].map((i) => (
+          <Animated.View
+            key={i}
+            style={{
+              position: "absolute",
+              zIndex: 2,
+              left: 19 + i * 20,
+              top: eyesY,
+              width: 8,
+              height: 13,
+              transform: [
+                { translateX: look.x },
+                { translateY: look.y },
+                { scaleY: i === 0 && wink ? 1 : blink },
+                { rotate: i === 0 ? "5deg" : "-5deg" },
+              ],
+            }}
+          >
+            <Svg width={8} height={13} viewBox="0 0 8 13">
+              <Rect x="0" y="0" width="8" height="13" rx="4" fill={ink} />
+              <Circle cx="2.8" cy="3.2" r="1" fill="#FFFFFF" opacity=".5" />
+            </Svg>
+          </Animated.View>
+        ))}
       </Animated.View>
     </View>
   );
