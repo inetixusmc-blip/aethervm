@@ -152,3 +152,74 @@ def test_human_request_is_not_a_completed_task(monkeypatch):
     assert any(e['kind']=='attention' for e in result['events'])
     assert not any(e.get('name')=='run_shell' for e in result['events'])
     assert client.get('/messages',headers=h).json()[-1]['text']=='Finish the website login.'
+
+def test_parameterless_tool_has_no_empty_object_schema():
+    wire=main.TOOLS.model_dump(exclude_none=True,by_alias=True)
+    declarations=wire.get('functionDeclarations',wire.get('function_declarations'))
+    shot=next(d for d in declarations if d['name']=='computer_screenshot')
+    assert 'parameters' not in shot
+
+def test_provider_errors_are_specific_without_leaking_secrets():
+    from types import SimpleNamespace
+    key='private-test-key'
+    quota=SimpleNamespace(code=429,message='quota exceeded '+key)
+    assert 'quota' in main.task_error(quota,'model').lower()
+    assert key not in main.task_error(quota,'model')
+    schema=SimpleNamespace(code=400,message='function properties must be non-empty '+key)
+    assert 'tool configuration' in main.task_error(schema,'model')
+    assert '404' in main.task_error(SimpleNamespace(code=404,message=key),'model')
+    assert key not in main.task_error(SimpleNamespace(code=400,message=key),'model')
+
+def test_watch_running_computer_does_not_wait_for_agent_command(monkeypatch):
+    from types import SimpleNamespace
+    import sandboxes
+    monkeypatch.setenv('SANDBOX_PROVIDER','daytona')
+    with main.db() as c:c.execute('INSERT OR REPLACE INTO workspaces VALUES(?,?)',('local-dev','running-box'))
+    starts=[]
+    box=SimpleNamespace(box=SimpleNamespace(state='started'),computer=lambda:SimpleNamespace(start=lambda:starts.append(True)))
+    monkeypatch.setattr(sandboxes,'existing_sandbox',lambda sid:box)
+    h=token(); main.operation_lock('local-dev').acquire()
+    try:
+        r=client.post('/workspace/start',headers=h)
+        assert r.status_code==200 and r.json()['control']=='agent'
+    finally:main.operation_lock('local-dev').release()
+    assert starts==[True]
+
+def test_desktop_starts_once_per_task_box():
+    from types import SimpleNamespace
+    from sandboxes import start_desktop
+    calls=[]
+    cu=SimpleNamespace(start=lambda:calls.append('started'))
+    box=SimpleNamespace(computer=lambda:cu)
+    start_desktop(box); start_desktop(box)
+    assert calls==['started']
+
+def test_image_tool_response_preserves_signature_and_orders_response_first(monkeypatch):
+    import time,base64
+    from google.genai import types
+    class Box:id='image-box'
+    class Models:
+        count=0
+        def generate_content(self,**kw):
+            self.count+=1
+            if self.count==1:
+                part=types.Part(function_call=types.FunctionCall(name='computer_screenshot',args={},id='img1'),thought_signature=b'opaque-signature')
+            else:
+                assert kw['contents'][-2].parts[0].thought_signature==b'opaque-signature'
+                parts=kw['contents'][-1].parts
+                assert parts[0].function_response.id=='img1'
+                assert parts[1].inline_data.mime_type=='image/png'
+                part=types.Part(text='I can see the computer.')
+            return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role='model',parts=[part]))])
+    class Client:
+        def __init__(self,**kw):self.models=Models()
+        def close(self):pass
+    monkeypatch.setattr(main,'workspace',lambda user:Box())
+    monkeypatch.setattr(main,'tool',lambda *args:{'image':base64.b64encode(b'png').decode(),'width':64,'height':64})
+    monkeypatch.setattr(main.genai,'Client',Client)
+    h=token();r=client.post('/tasks',headers=h,json={'prompt':'See my desktop','api_key':'not-a-real-api-key'})
+    for _ in range(100):
+        result=client.get('/tasks/'+r.json()['id'],headers=h).json()
+        if result['status']!='running':break
+        time.sleep(.01)
+    assert result['status']=='done'
