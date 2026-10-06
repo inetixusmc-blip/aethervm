@@ -2010,6 +2010,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               autoCapitalize="words"
               maxLength={48}
               style={{
+                width: "100%",
                 backgroundColor: C.surface,
                 color: C.text,
                 fontSize: 22,
@@ -2025,7 +2026,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 flexDirection: "row",
                 justifyContent: "center",
                 flexWrap: "wrap",
-                gap: 9,
+                gap: 4,
                 marginBottom: 26,
               }}
             >
@@ -2037,13 +2038,17 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                   accessibilityState={{ selected: editing.avatar === i }}
                   onPress={() => setEditing({ ...editing, avatar: i })}
                   style={{
-                    padding: 6,
+                    width: 46,
+                    height: 46,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 3,
                     borderWidth: 2,
                     borderRadius: 28,
                     borderColor: editing.avatar === i ? C.text : "transparent",
                   }}
                 >
-                  <Avatar variant={i} size={37} />
+                  <Avatar variant={i} size={36} />
                 </Pressable>
               ))}
             </View>
@@ -2842,6 +2847,13 @@ function Computer({
                   style={{ width: "100%", height: "100%" }}
                 />
               </Pressable>
+              {(screenError || activity) && (
+                <Text style={[s.caption, { marginTop: 12 }]}>
+                  {screenError
+                    ? "Connection interrupted. Reconnecting to the live screen…"
+                    : activity}
+                </Text>
+              )}
               <View style={s.controlOwnership}>
                 <Icon
                   name={owner === "user" ? "shield" : "eye"}
@@ -2853,7 +2865,9 @@ function Computer({
                     ? "You have control"
                     : agent?.name + " has control"}
                 </Text>
-                <Text style={s.tiny}>Live</Text>
+                <Text style={s.tiny}>
+                  {screenError ? "Last frame" : "Live"}
+                </Text>
               </View>
               <Button
                 label={owner === "user" ? "Hand back to agent" : "Take control"}
