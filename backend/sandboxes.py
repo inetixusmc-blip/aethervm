@@ -50,6 +50,11 @@ def get_sandbox(user, existing=None):
 def python_command(source):
     return 'python3 -c ' + shlex.quote(source)
 
+def start_desktop(box):
+    if not getattr(box,'_desktop_started',False):
+        box.computer().start()
+        box._desktop_started=True
+
 def tool(box, name, args):
     if name == 'run_shell': return box.execute(args['command'])
     if name == 'write_file':
@@ -72,7 +77,7 @@ with sync_playwright() as p:
         return box.execute(python_command(source))
     if name.startswith('computer_') or name=='browser_open':
         if not hasattr(box,'computer'): return {'error':'Desktop tools unavailable for this provider'}
-        cu=box.computer(); cu.start()
+        start_desktop(box); cu=box.computer()
         if name=='computer_screenshot':
             return capture_screen(cu)
         if name=='computer_click': cu.mouse.click(int(args['x']),int(args['y']))
