@@ -1,8 +1,8 @@
-# AetherVM 0.4 validation — 6 October 2026
+# AetherVM 0.4.1 validation — 6 October 2026
 
 ## Completed locally
 
-- 22 API tests pass, including auth, account/agent ownership, tool history and
+- 35 backend tests pass, including auth, account/agent ownership, tool history and
   Gemini signature/image responses, handoff pause, cancellation-related paths,
   screenshot compatibility, appearance persistence for all 18 shapes and legacy
   edits preserving appearance.
@@ -18,7 +18,7 @@
   original geometry, eye/body transforms, task morphs and state snapshots.
 - Interactive browser QA with native/provider/VM fixtures: actual character SVG
   renders; Home and agent navigation; creation with a different shape/material;
-  Home task submission and live preview; all five onboarding screens with skipped
+  Conversation task submission and live preview; all five onboarding screens with skipped
   Gemini setup; layouts at 360, 390 and landscape widths. No browser JS errors
   or settled-layout horizontal overflow in those scenarios. Browser Reduce Motion
   reaches the source engine; changing shape preserves the running engine and
@@ -29,11 +29,16 @@
 Native WebView rendering/performance on Android; real Google OAuth and Gemini
 provider setup; real Daytona live desktop, manual handoff, uploads/downloads,
 reconnect, reduced-motion system preference and keyboard behavior on Android.
-Browser fixtures do not prove these live integrations.
+Browser fixtures do not prove these live integrations. The 0.4.1 CI UI suite
+also checks source bouncing geometry during startup, Google photo rendering,
+minimal Home navigation and search. Its result is recorded by the build run.
 
-EC2 port 22 returns `Network is unreachable` from this session. No server
-packages, services, TLS, security groups or external AWS flow were changed or
-verified. The existing backend is retained. See `deploy/aws/README.md` for the
+The user deployed the backend on EC2 and verified HTTPS health, service startup
+and certificate renewal. EC2 port 22 is unreachable from this execution
+environment, so the latest source changes require the documented update command
+in the user's existing SSH session. Live Gemini and app-terminal recovery remain
+unverified. A live Daytona Debian 13/XFCE desktop was inspected and themed;
+this does not upgrade its OS to Ubuntu. See `deploy/aws/README.md` for the
 concrete deployment/update/verification procedure.
 
 Native APK status is recorded by the latest GitHub Actions run; do not infer

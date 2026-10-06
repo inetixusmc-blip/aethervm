@@ -41,6 +41,8 @@ import {MotionContext} from './components/MotionContext';
 import {taskState, finishes} from './components/character/appearance';
 import AppearancePicker from './components/character/AppearancePicker';
 import HomeScreen from './screens/HomeScreen';
+import ProfileImage from './components/ProfileImage';
+import StartupScreen from './components/StartupScreen';
 import BottomNavigation from './components/navigation/BottomNavigation';
 import LiveComputerPreview from './components/computer/LiveComputerPreview';
 import Onboarding from "./components/Onboarding";
@@ -305,6 +307,7 @@ type InitialWorkspace = {
   token?: string;
   name?: string;
   email?: string;
+  photo?: string;
   agents?: Agent[];
   selected?: string;
   messages?: Message[];
@@ -319,8 +322,11 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     [token, setToken] = useState(initial?.token || ""),
     [name, setName] = useState(initial?.name || ""),
     [email, setEmail] = useState(initial?.email || ""),
+    [photo, setPhoto] = useState(initial?.photo || ""),
     [config, setConfig] = useState(initial?.config || defaults);
   const [computerExpanded, setComputerExpanded] = useState(false),
+    [accountMenu, setAccountMenu] = useState(false),
+    [launchReady, setLaunchReady] = useState(initial?.ready || false),
     [screen, setScreen] = useState<Screen>(initial?.screen || "home"),
     [onboarding, setOnboarding] = useState(initial?.onboarding || false),
     [reduceMotion, setReduceMotion] = useState(false),
@@ -365,10 +371,18 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     ),
     [computerState, setComputerState] = useState("unknown");
   const list = useRef<FlatList<Message>>(null),
+    launchTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     selectedRef = useRef(selected),
     refreshVersion = useRef(0),
     sending = useRef(false);
   selectedRef.current = selected;
+  const startupReady = useCallback(() => {
+    if (!launchTimer.current) launchTimer.current = setTimeout(() => setLaunchReady(true),800);
+  },[]);
+  useEffect(()=>{
+    const fallback=setTimeout(()=>setLaunchReady(true),5000);
+    return()=>{clearTimeout(fallback);if(launchTimer.current)clearTimeout(launchTimer.current)};
+  },[]);
   const agent = agents.find((a) => a.id === selected);
   const api: Api = useCallback(
     async (path, method = "GET", body, overrideToken) => {
@@ -472,7 +486,13 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           setConfig(saved);
         }
         setName((await SecureStore.getItemAsync("name")) || "");
-        setEmail((await SecureStore.getItemAsync("email")) || "");
+        const savedEmail=(await SecureStore.getItemAsync("email")) || "";
+        setEmail(savedEmail);
+        const savedPhoto=(await SecureStore.getItemAsync("google-photo")) || "";
+        const googleUser=GoogleSignin.getCurrentUser();
+        const restoredPhoto=savedPhoto || (googleUser?.user.email===savedEmail ? googleUser.user.photo || "" : "");
+        setPhoto(restoredPhoto);
+        if(restoredPhoto&&!savedPhoto)await SecureStore.setItemAsync("google-photo",restoredPhoto);
         setSelected((await SecureStore.getItemAsync("agent")) || "");
         setToken((await SecureStore.getItemAsync("session")) || "");
         setOnboarding(
@@ -595,8 +615,11 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       await SecureStore.setItemAsync("session", data.token);
       await SecureStore.setItemAsync("name", data.name);
       await SecureStore.setItemAsync("email", result.data.user.email);
+      const accountPhoto=result.data.user.photo || "";
+      await SecureStore.setItemAsync("google-photo",accountPhoto);
       setName(data.name);
       setEmail(result.data.user.email);
+      setPhoto(accountPhoto);
       setToken(data.token);
     } catch (e) {
       report(e, "Could not sign in");
@@ -854,6 +877,8 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       await api("/auth/logout", "POST");
       await GoogleSignin.signOut();
       await SecureStore.deleteItemAsync("session");
+      await SecureStore.deleteItemAsync("google-photo");
+      setPhoto("");
       setToken("");
       setAgents([]);
       setMessages([]);
@@ -1185,6 +1210,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           icon="shield"
           title={name || "Your account"}
           subtitle={email || "Signed in with Google"}
+          right={<ProfileImage name={name} photo={photo} size={40}/>}
         />
       </Section>
       <Section title="AI PROVIDER">
@@ -1273,19 +1299,11 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         subtitle="Replay the guided setup"
         onPress={() => setOnboarding(true)}
       />
-      <Text style={s.settingsFooter}>AetherVM · Android preview 0.4</Text>
+      <Text style={s.settingsFooter}>AetherVM · Android preview 0.4.1</Text>
     </ScrollView>
   );
-  if (!ready)
-    return (
-      <SafeAreaView style={[s.root, s.loading]}>
-        <Brand size={35} />
-        <ActivityIndicator color={C.muted} style={{ marginTop: 24 }} />
-        <Text style={[s.caption, { marginTop: 16 }]}>
-          Restoring your workspace…
-        </Text>
-      </SafeAreaView>
-    );
+  if (!ready || !launchReady)
+    return <StartupScreen motion={config.animations&&!reduceMotion} onReady={startupReady}/>;
   return (
     <MotionContext.Provider value={config.animations && !reduceMotion}>
       <SafeAreaView style={s.root} edges={["top", "bottom"]}>
@@ -1429,7 +1447,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               </>}
               <SlideSurface key={screen} style={{ flex: 1 }} from="right">
                 {['home','agents','activity'].includes(screen) ? (
-                  <HomeScreen name={name} agents={agents} mode={screen as 'home'|'agents'|'activity'} onOpen={id=>{setSelected(id);setScreen('chat')}} onCreate={()=>{setProfileAdvanced(false);setEditing({...emptyProfile})}} onSubmit={(text,id)=>send(text,agents.find(a=>a.id===id))} busy={busy==='send'}/>
+                  <HomeScreen name={name} photo={photo} agents={agents} mode={screen as 'home'|'agents'|'activity'} onAccount={()=>setAccountMenu(true)} onOpen={id=>{setSelected(id);setScreen('chat')}} onCreate={()=>{setProfileAdvanced(false);setEditing({...emptyProfile})}}/>
                 ) : screen === "settings" ? (
                   settings
                 ) : screen === "computer" ? (
@@ -1497,10 +1515,16 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                   chat
                 )}
               </SlideSurface>
-              {['home','agents','activity','settings'].includes(screen)&&<BottomNavigation selected={screen} onSelect={setScreen}/>}
+              {['agents','activity','settings'].includes(screen)&&<BottomNavigation selected={screen} onSelect={setScreen}/>}
             </View>
           </KeyboardAvoidingView>
         )}
+        {accountMenu&&<Sheet title={name||'Your account'} subtitle={email||'Signed in with Google'} onClose={()=>setAccountMenu(false)}>
+          <View style={{alignItems:'center',paddingVertical:24}}><ProfileImage name={name} photo={photo} size={72}/></View>
+          <Row icon="spark" title="Your Aethers" onPress={()=>{setAccountMenu(false);setScreen('agents')}}/>
+          <Row icon="clock" title="Activity" onPress={()=>{setAccountMenu(false);setScreen('activity')}}/>
+          <Row icon="settings" title="Settings" onPress={()=>{setAccountMenu(false);setScreen('settings')}}/>
+        </Sheet>}
         {editing && (
           <Sheet
             title={"id" in editing ? "Edit agent" : "Create agent"}

@@ -2,8 +2,11 @@
 
 This update adds an actual dark desktop theme inside each Daytona computer:
 aubergine/orange PNG wallpaper, modern GTK controls, cleaner panels, readable
-fonts and fewer default desktop icons. It uses Yaru-dark/Yaru if those Ubuntu
-themes are installed, otherwise GTK's built-in Adwaita dark theme and icons.
+fonts and fewer default desktop icons. On the standard Debian/Ubuntu image it installs the official apt packages
+`yaru-theme-gtk`, `yaru-theme-icon` and `arc-theme` once, then uses Yaru-dark,
+Yaru icons and Arc-Dark window decorations. Already installed assets are reused.
+Package installation has bounded timeouts; built-in Adwaita dark styling remains
+available if repositories or privileges are unavailable.
 Supported dark window decoration themes are selected when present.
 
 The styling joins the running XFCE session's D-Bus. It backs up the original
@@ -35,16 +38,27 @@ sudo bash /opt/aethervm/deploy/aws/update.sh
 curl --fail https://16.16.124.235/health
 ```
 
-Reopen the agent's Computer view. No Android rebuild is needed. Use Settings →
+Reopen the agent's Computer view. Install APK 0.4.1 for the new Home screen,
+startup animation and Google profile photo; desktop changes run on the backend. Use Settings →
 Google Gemini → Test connection, then retry a task. If a server error persists,
 record its HTTP code and model name; an upstream outage cannot be repaired by
 desktop styling or retries.
 
 ## Validation
 
-32 backend tests pass locally, including transient error recovery after an
+35 backend tests pass locally, including transient error recovery after an
 executed tool, a strict retry limit, cancellation, no retries on quota/access
 errors, secret-safe final messages, PNG CRC/dimensions/decompression and desktop
-availability when styling fails. The full remote XFCE session still needs live
-verification after deployment. This build environment cannot start an XFCE
-session; do not treat these checks as a live Daytona screenshot comparison.
+availability when styling fails. A live existing Daytona container was inspected: Debian 13, XFCE 4.20.1.
+Official Yaru/Arc packages installed successfully, a terminal wrote and read
+`/workspace/AWSTEST.txt`, and desktop settings were exercised against the real
+VNC monitor. The image includes obsolete monitor-only settings; the theme also
+creates modern per-workspace paths using detected XRandR connector names.
+App-to-backend terminal and real Gemini requests still require a live check
+after AWS is updated. The direct Daytona terminal test does not prove the API
+route works with the deployed SDK credentials.
+
+The provider connection test separately probes model listing, a simple text
+request and a request with computer tools, identifying the failing phase.
+Manual terminal errors identify Daytona and never replay a command. Workspace
+initialization now creates a writable `/workspace` before entering it.

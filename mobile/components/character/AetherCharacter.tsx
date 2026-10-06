@@ -5,7 +5,7 @@ import {MotionContext} from '../MotionContext';
 import {appearance,Appearance,CharacterState} from './appearance';
 import {characterHTML} from './runtime.generated';
 
-function AetherCharacter({shape,material,variant=0,size=96,state='idle',interactive=false,visible=true}: Appearance & {variant?:number;size?:number;state?:CharacterState;interactive?:boolean;visible?:boolean}) {
+function AetherCharacter({shape,material,variant=0,size=96,state='idle',interactive=false,visible=true,onReady}: Appearance & {variant?:number;size?:number;state?:CharacterState;interactive?:boolean;visible?:boolean;onReady?:()=>void}) {
  const motion=useContext(MotionContext),ref=useRef<WebView>(null),frame=useRef<any>(null);
  const [ready,setReady]=useState(false),[active,setActive]=useState(AppState.currentState==='active'),[reaction,setReaction]=useState<CharacterState|null>(null),[rest,setRest]=useState<CharacterState>('idle');
  const idleSince=useRef(Date.now());
@@ -14,6 +14,8 @@ function AetherCharacter({shape,material,variant=0,size=96,state='idle',interact
  const displayed=reaction || (state==='idle' || success ? rest : state);
  const payload=JSON.stringify({shape:p.shape,finish:p.finish,size,state:displayed,reduced:!motion,paused:!active||!visible});
  const source=useMemo(()=>({html:characterHTML}),[]);
+ const readyCallback=useRef(onReady);readyCallback.current=onReady;
+ useEffect(()=>{if(ready)readyCallback.current?.()},[ready]);
  useEffect(()=>{const sub=AppState.addEventListener('change',s=>setActive(s==='active'));return()=>sub.remove()},[]);
  useEffect(()=>{if(!ready)return; const script=`window.__aetherApply(${payload});true;`;if(Platform.OS==='web')frame.current?.contentWindow?.postMessage({aether:JSON.parse(payload)},'*');else ref.current?.injectJavaScript(script)},[payload,ready]);
  useEffect(()=>{if(!reaction)return;const t=setTimeout(()=>setReaction(null),1400);return()=>clearTimeout(t)},[reaction]);

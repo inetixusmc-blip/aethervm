@@ -1,7 +1,7 @@
 """A modern XFCE desktop for Daytona; also runnable inside a sandbox.
 
-No dependency on Gemini, downloads, or root access. Uses Ubuntu's Yaru when
-installed, with GTK's built-in Adwaita dark theme as a portable fallback.
+Styling needs no root access. Optional asset provisioning uses the image's
+configured apt repositories; GTK's built-in dark theme remains a fallback.
 """
 import json
 import os
@@ -10,10 +10,29 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import time
 import zlib
 
-REVISION = 'aethervm-desktop-1'
+REVISION = 'aethervm-desktop-4'
+
+
+def install_assets():
+    if Path('/usr/share/themes/Yaru-dark').exists() and Path('/usr/share/icons/Yaru').exists() and Path('/usr/share/themes/Arc-Dark/xfwm4').exists():
+        return {'status': 'already_installed'}
+    if not shutil.which('apt-get'):
+        return {'status': 'fallback', 'reason': 'no_apt'}
+    prefix = [] if os.geteuid() == 0 else ['sudo', '-n']
+    if prefix and not shutil.which('sudo'):
+        return {'status': 'fallback', 'reason': 'no_privileges'}
+    try:
+        for args, limit in ((['update'],25),(['install','-y','--no-install-recommends','yaru-theme-gtk','yaru-theme-icon','arc-theme'],45)):
+            result = subprocess.run(prefix+['apt-get']+args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=limit,env={**os.environ,'DEBIAN_FRONTEND':'noninteractive'})
+            if result.returncode:
+                return {'status': 'fallback', 'reason': 'package_install_failed'}
+    except (OSError,subprocess.TimeoutExpired):
+        return {'status': 'fallback', 'reason': 'package_install_unavailable'}
+    return {'status': 'installed'}
 
 
 def desktop_env():
@@ -88,10 +107,21 @@ def apply(force=False):
     image = assets / 'wallpaper.png'
     wallpaper(image)
     props = query('xfce4-desktop','-l').stdout.splitlines()
-    backdrops = sorted(set(p.rsplit('/',1)[0] for p in props if re.fullmatch(r'/backdrop/screen\d+/monitor[^/]+/workspace\d+/[^/]+',p)))
+    # Daytona's Debian image still uses the older monitor-only schema.
+    backdrops = set(p.rsplit('/',1)[0] for p in props if re.fullmatch(r'/backdrop/screen\d+/monitor[^/]+/(?:workspace\d+/)?[^/]+',p))
+    # XFCE 4.20 can ship only obsolete settings: create its actual monitor paths.
+    if shutil.which('xrandr'):
+        monitors = subprocess.run(['xrandr','--query'],env=env,capture_output=True,text=True,timeout=5).stdout
+        count = query('xfwm4','-p','/general/workspace_count').stdout.strip()
+        count = min(32,max(1,int(count))) if count.isdigit() else 1
+        for monitor in re.findall(r'^([^\s/]+) connected\b',monitors,re.M):
+            for workspace in range(count):
+                backdrops.add(f'/backdrop/screen0/monitor{monitor}/workspace{workspace}')
     if not backdrops: raise RuntimeError('Desktop monitor settings are not ready')
-    for prefix in backdrops:
+    for prefix in sorted(backdrops):
         put('xfce4-desktop',prefix+'/last-image',image)
+        for key in ('image-path','last-single-image'):
+            if prefix+'/'+key in props: put('xfce4-desktop',prefix+'/'+key,image)
         put('xfce4-desktop',prefix+'/image-style',5,'int')
         put('xfce4-desktop',prefix+'/cycle-enable',False,'bool')
     put('xfce4-desktop','/desktop-icons/file-icons/show-home',False,'bool')
@@ -105,9 +135,22 @@ def apply(force=False):
         put('xfce4-panel',panel+'/background-style',0,'uint')
         put('xfce4-panel',panel+'/enter-opacity',100,'uint')
         put('xfce4-panel',panel+'/leave-opacity',100,'uint')
+    if len(panels) == 2:
+        dock = panels[1]
+        put('xfce4-panel',dock+'/mode',1,'uint')
+        put('xfce4-panel',dock+'/position','p=7;x=0;y=0')
+        put('xfce4-panel',dock+'/icon-size',32,'uint')
+        put('xfce4-panel',dock+'/autohide-behavior',0,'uint')
+    put('xfce4-panel','/panels/dark-mode',True,'bool')
+    for prop in query('xfce4-panel','-l').stdout.splitlines():
+        if re.fullmatch(r'/plugins/plugin-\d+',prop) and query('xfce4-panel','-p',prop).stdout.strip() == 'applicationsmenu':
+            put('xfce4-panel',prop+'/button-title','Activities')
+            put('xfce4-panel',prop+'/show-button-title',True,'bool')
+            put('xfce4-panel',prop+'/show-menu-icons',True,'bool')
+    subprocess.run(['xfdesktop','--reload'],env=env,capture_output=True,timeout=5)
     marker.write_text(REVISION)
     return {'status': 'configured', 'theme': gtk, 'icons': icons}
 
 
 if __name__ == '__main__':
-    print(json.dumps(apply()))
+    print(json.dumps(install_assets() if '--install-assets' in sys.argv else apply()))

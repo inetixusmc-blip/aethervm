@@ -34,7 +34,10 @@ class DaytonaSandbox:
             if os.getenv('DAYTONA_SNAPSHOT'): params.snapshot = os.environ['DAYTONA_SNAPSHOT']
             self.box = self.client.create(params)
         self.id = self.box.id
-        self.execute('mkdir -p /workspace')
+        # The default image has no /workspace. Bootstrap before any cd into it.
+        bootstrap='test -d /workspace && test -w /workspace || { mkdir -p /workspace 2>/dev/null && test -w /workspace; } || sudo -n install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /workspace'
+        result=self.box.process.exec('bash -lc '+shlex.quote(bootstrap),timeout=20)
+        if result.exit_code!=0: raise RuntimeError('Workspace directory is unavailable')
     def execute(self, command):
         r = self.box.process.exec('timeout -k 5 60 bash -lc ' + shlex.quote('cd /workspace && '+command), timeout=70)
         return {'exit_code':r.exit_code, 'output':r.result[:24000]}
@@ -59,9 +62,23 @@ def start_desktop(box):
             # A theme failure must never prevent shell/files/desktop automation.
             from pathlib import Path
             try:
-                result=box.execute(python_command(Path(__file__).with_name('desktop_theme.py').read_text()))
+                source=Path(__file__).with_name('desktop_theme.py').read_text()
+                if isinstance(box,DaytonaSandbox):
+                    # Known apt packages only; existing installs return immediately.
+                    # Run outside the 60-second interactive-command limit.
+                    try:
+                        box.box.process.exec('timeout -k 5 75 '+python_command(source)+' --install-assets',timeout=85)
+                    except Exception as exc:
+                        import logging
+                        logging.getLogger(__name__).warning('Desktop assets unavailable: %s',type(exc).__name__)
+                result=box.execute(python_command(source))
                 box._desktop_theme_ready=result.get('exit_code')==0
-            except Exception:
+                if not box._desktop_theme_ready:
+                    import logging
+                    logging.getLogger(__name__).warning('Desktop appearance failed with exit code %s',result.get('exit_code'))
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning('Desktop appearance failed: %s',type(exc).__name__)
                 box._desktop_theme_ready=False
 
 def tool(box, name, args):

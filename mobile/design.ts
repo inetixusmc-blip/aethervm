@@ -1,6 +1,6 @@
 import {StyleSheet,Platform} from 'react-native';
 export const C = {
-  bg: "#111315",
+  bg: "#121212",
   rail: "#151719",
   surface: "#1B1E21",
   raised: "#222629",

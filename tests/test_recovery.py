@@ -114,3 +114,42 @@ def test_desktop_theme_failure_keeps_computer_available(monkeypatch):
     sandboxes.start_desktop(box)
     assert calls == [True]
     assert box._desktop_started and not box._desktop_theme_ready
+
+
+def test_daytona_bootstraps_before_using_workspace(monkeypatch):
+    import daytona,sandboxes,shlex
+    commands=[]
+    remote=SimpleNamespace(id='existing-box',state='started',process=SimpleNamespace(exec=lambda command,**kwargs:(commands.append(command) or SimpleNamespace(exit_code=0,result=''))))
+    monkeypatch.setattr(daytona,'Daytona',lambda:SimpleNamespace(get=lambda sid:remote))
+    box=sandboxes.DaytonaSandbox('test-scope','existing-box')
+    assert len(commands)==1
+    assert 'cd /workspace' not in commands[0]
+    assert '/workspace' in commands[0] and 'chmod 777' not in commands[0]
+    box.execute('echo once')
+    assert shlex.split(commands[-1])[-1]=='cd /workspace && echo once'
+
+
+def test_manual_terminal_failure_is_safe_and_not_repeated(monkeypatch):
+    from test_api import client,token
+    calls=[]
+    def fail(command):calls.append(command);raise RuntimeError('private-test-key')
+    monkeypatch.setattr(main,'workspace',lambda key:SimpleNamespace(execute=fail))
+    h=token()
+    assert client.post('/workspace/control',headers=h,json={'owner':'user'}).status_code==200
+    result=client.post('/workspace/terminal',headers=h,json={'command':'echo once'})
+    assert result.status_code==503 and calls==['echo once']
+    assert 'Daytona' in result.json()['detail'] and 'private-test-key' not in str(result.json())
+    client.post('/workspace/control',headers=h,json={'owner':'agent'})
+
+
+def test_provider_test_isolates_plain_text_failure(monkeypatch):
+    from test_api import client,token
+    calls=[]
+    def generate(**kwargs):calls.append(kwargs);raise api_error(503)
+    models=SimpleNamespace(list=lambda:[SimpleNamespace(name='models/gemini-3.8-flash',display_name='Flash',supported_actions=['generateContent'])],generate_content=generate)
+    monkeypatch.setattr(main.genai,'Client',lambda **kwargs:SimpleNamespace(models=models,close=lambda:None))
+    result=client.post('/provider/test',headers=token(),json={'api_key':'test-not-a-real-key','model':'gemini-3.8-flash'})
+    assert result.status_code==400 and len(calls)==1
+    assert calls[0]['config'].tools is None
+    assert 'simple text request' in result.json()['detail']
+    assert 'private-test-key' not in str(result.json())

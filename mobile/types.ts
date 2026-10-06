@@ -16,6 +16,7 @@ export type Agent = {
   material?: string;
   memory: string;
   preview?: string;
+  last_activity?: number;
   job?: Job | null;
 };
 export type Message = { id: number; role: string; text: string; created?: number };

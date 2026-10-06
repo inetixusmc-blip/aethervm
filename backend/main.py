@@ -358,12 +358,13 @@ def agents(user=Depends(current_user)):
         for r in c.execute('SELECT * FROM agents WHERE user=? ORDER BY created',(user,)):
             agent=with_appearance(c,dict(r))
             job=c.execute('SELECT id,status,error,created,events FROM jobs WHERE user=? AND agent_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(user,r['id'])).fetchone()
-            msg=c.execute('SELECT text,role FROM messages WHERE user=? AND agent_id=? ORDER BY id DESC LIMIT 1',(user,r['id'])).fetchone()
+            msg=c.execute('SELECT text,role,created FROM messages WHERE user=? AND agent_id=? ORDER BY id DESC LIMIT 1',(user,r['id'])).fetchone()
             agent['job']=dict(job) if job else None
             if agent['job']:
                 agent['job']['events']=json.loads(agent['job']['events'])[-8:]
                 agent['job']['control']='user' if user_controls(scope(user,r['id'])) else 'agent'
             agent['preview']=msg['text'][:120] if msg else agent['role']
+            agent['last_activity']=max(msg['created'] or 0 if msg else 0,job['created'] or 0 if job else 0)
             result.append(agent)
         return result
 @app.post('/agents')
@@ -402,17 +403,21 @@ class ProviderKey(BaseModel):
 @app.post('/provider/test')
 def test_provider(body:ProviderKey,user=Depends(current_user)):
     client=None
+    phase='model listing'
     try:
-        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=15000,retry_options=types.HttpRetryOptions(attempts=1)))
+        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=12000,retry_options=types.HttpRetryOptions(attempts=1)))
         models=[{'id':m.name.replace('models/',''),'name':m.display_name or m.name.replace('models/','')} for m in client.models.list() if 'generateContent' in (m.supported_actions or []) and m.name and 'gemini' in m.name]
         checked=None
         preferred=sorted(models,key=lambda m:('flash' not in m['id'],'preview' in m['id'],'lite' in m['id'],m['id']))
         checked=body.model if body.model and any(m['id']==body.model for m in models) else (preferred[0]['id'] if preferred else None)
         if not checked: raise HTTPException(400,'No Gemini text models are available to this key.')
-        generate_with_retries(client,model=checked,contents='Reply OK. Do not use tools.',config=types.GenerateContentConfig(tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=128))
+        phase='simple text request'
+        client.models.generate_content(model=checked,contents='Reply OK.',config=types.GenerateContentConfig(max_output_tokens=1024))
+        phase='request with computer tools'
+        generate_with_retries(client,model=checked,contents='Reply OK. Do not use tools.',config=types.GenerateContentConfig(tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=1024))
         return {'ok':True,'models':models,'model_checked':checked}
     except HTTPException: raise
-    except Exception as exc: raise HTTPException(400,task_error(exc,'model'))
+    except Exception as exc: raise HTTPException(400,task_error(exc,'model')+' Failed during the '+phase+'.')
     finally:
         if client:
             try: client.close()
@@ -504,6 +509,11 @@ def terminal(body:Command,user=Depends(workspace_scope)):
         if not user_controls(user): raise HTTPException(409,'Take control before running a command')
         control_until[user]=time.time()+120
         return workspace(user).execute(body.command)
+    except HTTPException: raise
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning('Terminal service failed: %s',type(exc).__name__)
+        raise HTTPException(503,'The Daytona computer could not run this command. Reconnect the computer and retry. This terminal does not use Gemini; the command was not automatically repeated.')
     finally: operation_lock(user).release()
 
 def file_path(path):
