@@ -1,4 +1,4 @@
-import os, json, sqlite3, secrets, time, threading, uuid, base64
+import os, json, sqlite3, secrets, time, threading, uuid, base64, random
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
@@ -10,6 +10,8 @@ from google.oauth2 import id_token
 from google.auth.transport.requests import Request
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
+import httpx
 from sandboxes import get_sandbox, tool, python_command
 
 app=FastAPI(title='AetherVM API')
@@ -156,9 +158,25 @@ def task_error(exc,stage):
             if 'signature' in message: return 'Gemini rejected the reasoning history (400). Start a new task; the previous computer actions are preserved.'
             if 'function' in message or 'schema' in message or 'properties' in message: return 'Gemini rejected the tool configuration (400). This is an app compatibility issue, not a VM failure.'
             return 'Gemini rejected the request (400). Test the selected model in Settings; its API or tool support may differ.'
-        if code and code>=500: return 'Gemini is temporarily unavailable. Your computer and files are preserved; retry shortly.'
+        if isinstance(code,int) and code>=500: return f'Gemini returned a server error ({code}). Your computer and files are preserved. Retry shortly or test another model in Settings.'
+        if isinstance(exc,httpx.TransportError): return 'The connection to Gemini timed out or failed. Your computer and files are preserved; retry shortly.'
         return 'The Gemini request could not finish. Test the model connection and retry; your computer and files are preserved.'
     return 'Could not wake the Linux computer. Check Daytona sandbox availability and remaining credits, then retry.'
+def generate_with_retries(client,job=None,**kwargs):
+    # Retry only the model request; never replay computer/file actions.
+    for attempt in range(3):
+        if job and cancelled[job].is_set(): raise RuntimeError('Task cancelled')
+        try: return client.models.generate_content(**kwargs)
+        except (APIError,httpx.TransportError) as exc:
+            code=getattr(exc,'code',None)
+            if isinstance(exc,APIError) and code not in (408,500,502,503,504): raise
+            if attempt==2: raise
+            delay=2**(attempt+1)+random.uniform(0,.5)
+            if job:
+                reason=f' ({code})' if isinstance(code,int) else ''
+                emit(job,{'kind':'status','text':f'Gemini request failed{reason}. Retrying {attempt+2}/3…'})
+                if cancelled[job].wait(delay): raise RuntimeError('Task cancelled')
+            else: time.sleep(delay)
 def run(job,user,body):
     client=None
     stage='workspace'
@@ -178,14 +196,14 @@ def run(job,user,body):
                 emit(job,{'kind':'status','text':'Desktop could not start; shell and files remain available.'})
         with db() as c: history=[dict(r) for r in c.execute('SELECT role,text FROM messages WHERE user=? AND agent_id=? ORDER BY id DESC LIMIT 30',(user,agent['id']))][::-1]
         contents=[types.Content(role='model' if m['role']=='assistant' else 'user',parts=[types.Part(text=m['text'])]) for m in history]
-        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=90000))
+        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=90000,retry_options=types.HttpRetryOptions(attempts=1)))
         with db() as c: saved_skills=[dict(r) for r in c.execute('SELECT name,instructions FROM skills WHERE user=? AND agent_id=?',(user,agent['id']))]
         context=SYSTEM+f"\nYour name is {agent['name']}. Your role is {agent['role']}. Responsibilities: {agent['instructions']}\nSaved memory: {agent['memory']}\nReusable skills: {json.dumps(saved_skills)}"
         waiting_for_user=False
         stage='model'
         for _ in range(24):
             if cancelled[job].is_set(): break
-            response=client.models.generate_content(model=body.model,contents=contents,config=types.GenerateContentConfig(system_instruction=context,tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=4096))
+            response=generate_with_retries(client,job,model=body.model,contents=contents,config=types.GenerateContentConfig(system_instruction=context,tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=4096))
             if not response.candidates or not response.candidates[0].content: raise RuntimeError('Model returned no content')
             content=response.candidates[0].content
             contents.append(content) # Preserve Gemini thought signatures and tool call IDs.
@@ -385,13 +403,13 @@ class ProviderKey(BaseModel):
 def test_provider(body:ProviderKey,user=Depends(current_user)):
     client=None
     try:
-        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=15000))
+        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=15000,retry_options=types.HttpRetryOptions(attempts=1)))
         models=[{'id':m.name.replace('models/',''),'name':m.display_name or m.name.replace('models/','')} for m in client.models.list() if 'generateContent' in (m.supported_actions or []) and m.name and 'gemini' in m.name]
         checked=None
         preferred=sorted(models,key=lambda m:('flash' not in m['id'],'preview' in m['id'],'lite' in m['id'],m['id']))
         checked=body.model if body.model and any(m['id']==body.model for m in models) else (preferred[0]['id'] if preferred else None)
         if not checked: raise HTTPException(400,'No Gemini text models are available to this key.')
-        client.models.generate_content(model=checked,contents='Reply OK. Do not use tools.',config=types.GenerateContentConfig(tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=16))
+        generate_with_retries(client,model=checked,contents='Reply OK. Do not use tools.',config=types.GenerateContentConfig(tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=128))
         return {'ok':True,'models':models,'model_checked':checked}
     except HTTPException: raise
     except Exception as exc: raise HTTPException(400,task_error(exc,'model'))
@@ -424,13 +442,15 @@ def start_computer(user=Depends(workspace_scope)):
             from sandboxes import existing_sandbox
             box=existing_sandbox(row['sandbox'])
             if str(box.box.state).lower().split('.')[-1]=='started':
-                box.computer().start()
+                from sandboxes import start_desktop
+                start_desktop(box)
                 return {'state':'started','control':'user' if user_controls(user) else 'agent'}
         except Exception: raise HTTPException(503,'Could not connect to the running desktop. Retry shortly.')
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'Computer is busy. Please retry shortly.')
     try:
         box=computer_box(user)
-        box.computer().start()
+        from sandboxes import start_desktop
+        start_desktop(box)
         return {'state':'started','control':'user' if user_controls(user) else 'agent'}
     except HTTPException: raise
     except Exception: raise HTTPException(503,'Could not start the desktop. This Daytona snapshot must include the desktop stack.')

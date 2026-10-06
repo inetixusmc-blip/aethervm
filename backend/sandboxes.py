@@ -54,6 +54,15 @@ def start_desktop(box):
     if not getattr(box,'_desktop_started',False):
         box.computer().start()
         box._desktop_started=True
+        if hasattr(box,'execute'):
+            # Styling runs inside this agent's own sandbox and persists on disk.
+            # A theme failure must never prevent shell/files/desktop automation.
+            from pathlib import Path
+            try:
+                result=box.execute(python_command(Path(__file__).with_name('desktop_theme.py').read_text()))
+                box._desktop_theme_ready=result.get('exit_code')==0
+            except Exception:
+                box._desktop_theme_ready=False
 
 def tool(box, name, args):
     if name == 'run_shell': return box.execute(args['command'])
