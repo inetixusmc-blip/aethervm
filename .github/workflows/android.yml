@@ -4,7 +4,6 @@ on:
   push:
     paths:
       - 'mobile/**'
-      - '.github/workflows/android.yml'
 permissions:
   contents: read
 jobs:
@@ -30,6 +29,33 @@ jobs:
         working-directory: mobile
       - run: npm run typecheck
         working-directory: mobile
+      - name: Install browser QA
+        run: |
+          npm install --prefix /tmp/aethervm-ui-checks playwright@1.61.1
+          /tmp/aethervm-ui-checks/node_modules/.bin/playwright install --with-deps chromium
+      - name: Check UI flows
+        env:
+          PLAYWRIGHT_MODULE: /tmp/aethervm-ui-checks/node_modules/playwright/index.mjs
+        run: |
+          node qa/build-preview.cjs
+          node qa/check-ui.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AetherVM-UI-checks
+          path: qa/*.png
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check backend
+        run: |
+          pip install -r backend/requirements.txt pytest httpx
+          python -m pytest -q tests
+      - name: Compare original character geometry
+        run: |
+          git clone https://github.com/iduu/grokbot-animation.git /tmp/grokbot-animation
+          git -C /tmp/grokbot-animation checkout 6c27d9640c37e02e1eab0c4f7d98fa01196c66b8
+          GROKBOT_SOURCE=/tmp/grokbot-animation/component npm --prefix mobile run compare:character
       - run: chmod +x gradlew && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --max-workers=2
         working-directory: mobile/android
       - uses: actions/upload-artifact@v4
