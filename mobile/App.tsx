@@ -16,6 +16,8 @@ import {
   AppState,
   Switch,
   Linking,
+  BackHandler,
+  AccessibilityInfo,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -30,6 +32,13 @@ import {
 } from "@react-native-google-signin/google-signin";
 import Svg, { Path, Rect, Circle, Line } from "react-native-svg";
 import Markdown from "react-native-markdown-display";
+import AgentFace, {
+  MotionContext,
+  faceColors,
+  FaceMood,
+} from "./components/AgentFace";
+import Onboarding from "./components/Onboarding";
+import SlideSurface from "./components/SlideSurface";
 
 type Job = {
   control?: string;
@@ -168,71 +177,19 @@ function Brand({ size = 27 }: { size?: number }) {
     </Svg>
   );
 }
-const avatarColors = [
-  "#B7C6FA",
-  "#A7CDBD",
-  "#D9BDA4",
-  "#C8B5DE",
-  "#ADC9D1",
-  "#D6C696",
-];
-const Avatar = memo(
-  ({
-    variant = 0,
-    size = 36,
-    active = false,
-  }: {
-    variant?: number;
-    size?: number;
-    active?: boolean;
-  }) => {
-    const color = avatarColors[variant % 6];
-    return (
-      <View style={{ width: size, height: size }}>
-        <Svg width={size} height={size} viewBox="0 0 64 64">
-          <Rect
-            x="1"
-            y="1"
-            width="62"
-            height="62"
-            rx="20"
-            fill={color + "18"}
-          />
-          {variant % 3 === 0 ? (
-            <Rect x="14" y="16" width="36" height="34" rx="12" fill={color} />
-          ) : variant % 3 === 1 ? (
-            <Path d="M32 12 52 47Q32 57 12 47Z" fill={color} />
-          ) : (
-            <Circle cx="32" cy="32" r="20" fill={color} />
-          )}
-          <Rect x="21" y="28" width="7" height="10" rx="3.5" fill={C.bg} />
-          <Rect x="36" y="28" width="7" height="10" rx="3.5" fill={C.bg} />
-          {variant > 2 && (
-            <Path
-              d="M22 16h20"
-              stroke={C.bg}
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-          )}
-        </Svg>
-        {active && (
-          <View
-            style={[
-              s.presence,
-              {
-                width: 9,
-                height: 9,
-                borderRadius: 5,
-                backgroundColor: C.green,
-              },
-            ]}
-          />
-        )}
-      </View>
-    );
-  },
-);
+const avatarColors = faceColors;
+const Avatar = AgentFace;
+function moodFor(status?: string): FaceMood {
+  return status === "running"
+    ? "working"
+    : status === "waiting"
+      ? "waiting"
+      : status === "error" || status === "interrupted"
+        ? "error"
+        : status === "done"
+          ? "success"
+          : "idle";
+}
 function IconButton({
   name,
   label,
@@ -410,22 +367,47 @@ function Sheet({
   onClose,
   children,
   wide = false,
+  fullScreen = false,
 }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
   children: React.ReactNode;
   wide?: boolean;
+  fullScreen?: boolean;
 }) {
+  const { width } = useWindowDimensions();
+  const full = fullScreen && width < 700;
+  const motion = React.useContext(MotionContext);
   return (
-    <Modal transparent animationType="fade" onRequestClose={onClose}>
-      <View style={s.scrim}>
+    <Modal
+      transparent
+      animationType={motion ? "slide" : "none"}
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={[s.scrim, full && { paddingHorizontal: 0, paddingVertical: 0 }]}
+      >
         <Pressable
           style={StyleSheet.absoluteFill}
           onPress={onClose}
           accessibilityLabel="Close dialog"
         />
-        <SafeAreaView style={[s.sheet, wide && { maxWidth: 800 }]}>
+        <SafeAreaView
+          style={[
+            s.sheet,
+            wide && { maxWidth: 800 },
+            full && {
+              maxWidth: 700,
+              maxHeight: "100%",
+              height: "100%",
+              borderRadius: 0,
+              borderWidth: 0,
+              backgroundColor: C.bg,
+            },
+          ]}
+        >
           <View style={s.sheetHead}>
             <View style={{ flex: 1 }}>
               <Text style={s.sheetTitle}>{title}</Text>
@@ -440,7 +422,7 @@ function Sheet({
             {children}
           </ScrollView>
         </SafeAreaView>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -689,6 +671,7 @@ type InitialWorkspace = {
   messages?: Message[];
   job?: Job | null;
   screen?: Screen;
+  onboarding?: boolean;
 };
 function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
   const { width } = useWindowDimensions();
@@ -701,6 +684,9 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
   const [computerExpanded, setComputerExpanded] = useState(false),
     [screen, setScreen] = useState<Screen>(initial?.screen || "chat"),
     [drawer, setDrawer] = useState(false),
+    [onboarding, setOnboarding] = useState(initial?.onboarding || false),
+    [reduceMotion, setReduceMotion] = useState(false),
+    [profileAdvanced, setProfileAdvanced] = useState(false),
     [agents, setAgents] = useState<Agent[]>(initial?.agents || []),
     [selected, setSelected] = useState(initial?.selected || ""),
     [messages, setMessages] = useState<Message[]>(initial?.messages || []),
@@ -818,6 +804,14 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     return items;
   }, [api]);
   useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const listener = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      setReduceMotion,
+    );
+    return () => listener.remove();
+  }, []);
+  useEffect(() => {
     (async () => {
       try {
         const raw = await SecureStore.getItemAsync("settings");
@@ -833,6 +827,9 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         setEmail((await SecureStore.getItemAsync("email")) || "");
         setSelected((await SecureStore.getItemAsync("agent")) || "");
         setToken((await SecureStore.getItemAsync("session")) || "");
+        setOnboarding(
+          (await SecureStore.getItemAsync("onboarding-v3")) !== "done",
+        );
       } catch (e) {
         report(e, "Could not restore your account");
       } finally {
@@ -1046,6 +1043,25 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       setBusy("");
     }
   };
+  useEffect(() => {
+    const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (drawer) {
+        setDrawer(false);
+        return true;
+      }
+      if (screen !== "chat") {
+        setScreen("chat");
+        return true;
+      }
+      return false;
+    });
+    return () => back.remove();
+  }, [drawer, screen]);
+  const finishOnboarding = async (key: string, model: string) => {
+    await persist({ ...config, key, model });
+    await SecureStore.setItemAsync("onboarding-v3", "done");
+    setOnboarding(false);
+  };
   const saveProfile = async () => {
     if (!editing || !editing.name.trim()) return;
     setBusy("agent");
@@ -1054,7 +1070,13 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       const saved = await api(
         "/agents" + (editId ? "/" + editId : ""),
         editId ? "PUT" : "POST",
-        editing,
+        {
+          ...editing,
+          role: editing.role.trim() || "General assistant",
+          instructions:
+            editing.instructions.trim() ||
+            "Complete useful work, verify results and keep updates concise.",
+        },
       );
       await refreshAgents();
       setEditing(null);
@@ -1098,9 +1120,16 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     try {
       const key = draftKey.trim() || config.key;
       if (!key) throw new Error("Enter your Gemini API key first.");
-      const result = await api("/provider/test", "POST", { api_key: key });
+      const result = await api("/provider/test", "POST", {
+        api_key: key,
+        model: config.model,
+      });
       setModels(result.models);
-      await persist({ ...config, key });
+      await persist({
+        ...config,
+        key,
+        model: result.model_checked || config.model,
+      });
       setDraftKey("");
       setConnection("Connected to Google Gemini");
     } catch (e) {
@@ -1238,6 +1267,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         style={s.newAgent}
         onPress={() => {
           setDrawer(false);
+          setProfileAdvanced(false);
           setEditing({ ...emptyProfile });
         }}
       >
@@ -1274,7 +1304,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
             <Avatar
               variant={a.avatar}
               size={42}
-              active={a.job?.status === "running"}
+              mood={moodFor(a.job?.status)}
             />
             <View style={{ flex: 1, minWidth: 0 }}>
               <View style={s.inline}>
@@ -1706,7 +1736,13 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           }
         />
       </Section>
-      <Text style={s.settingsFooter}>aetherVM · Android preview 0.2</Text>
+      <Row
+        icon="book"
+        title="Getting started"
+        subtitle="Replay the guided setup"
+        onPress={() => setOnboarding(true)}
+      />
+      <Text style={s.settingsFooter}>aetherVM · Android preview 0.3</Text>
     </ScrollView>
   );
   if (!ready)
@@ -1720,168 +1756,195 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       </SafeAreaView>
     );
   return (
-    <SafeAreaView style={s.root} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      {!token ? (
-        <View style={s.login}>
-          <View style={s.loginBrand}>
-            <Brand />
-            <Text style={s.brandName}>aetherVM</Text>
-          </View>
-          <View style={s.loginBody}>
-            <View style={s.loginAvatars}>
-              <Avatar size={52} variant={1} />
-              <View style={{ marginTop: -18 }}>
-                <Avatar size={72} variant={0} />
-              </View>
-              <Avatar size={52} variant={2} />
+    <MotionContext.Provider value={config.animations && !reduceMotion}>
+      <SafeAreaView style={s.root} edges={["top", "bottom"]}>
+        <StatusBar style="light" />
+        {!token ? (
+          <View style={s.login}>
+            <View style={s.loginBrand}>
+              <Brand />
+              <Text style={s.brandName}>aetherVM</Text>
             </View>
-            <Text style={s.loginTitle}>
-              Your AI workers{"\n"}have computers.
-            </Text>
-            <Text style={s.loginDescription}>
-              Delegate work. Come back{"\n"}when it’s finished.
-            </Text>
-            <Button
-              label="Continue with Google"
-              onPress={login}
-              loading={busy === "login"}
-            />
-            <Text style={s.loginHint}>
-              {busy === "login"
-                ? "Connecting to your workspace…"
-                : "Use your own Gemini API key."}
-            </Text>
+            <View style={s.loginBody}>
+              <View style={s.loginAvatars}>
+                <Avatar size={52} variant={1} />
+                <View style={{ marginTop: -18 }}>
+                  <Avatar size={72} variant={0} />
+                </View>
+                <Avatar size={52} variant={2} />
+              </View>
+              <Text style={s.loginTitle}>
+                Your AI workers{"\n"}have computers.
+              </Text>
+              <Text style={s.loginDescription}>
+                Delegate work. Come back{"\n"}when it’s finished.
+              </Text>
+              <Button
+                label="Continue with Google"
+                onPress={login}
+                loading={busy === "login"}
+              />
+              <Text style={s.loginHint}>
+                {busy === "login"
+                  ? "Connecting to your workspace…"
+                  : "Use your own Gemini API key."}
+              </Text>
+            </View>
+            <View style={s.loginLegal}>
+              <Pressable onPress={() => setPolicy("Terms")}>
+                <Text style={s.tiny}>Terms</Text>
+              </Pressable>
+              <Text style={s.tiny}>·</Text>
+              <Pressable onPress={() => setPolicy("Privacy")}>
+                <Text style={s.tiny}>Privacy</Text>
+              </Pressable>
+            </View>
           </View>
-          <View style={s.loginLegal}>
-            <Pressable onPress={() => setPolicy("Terms")}>
-              <Text style={s.tiny}>Terms</Text>
-            </Pressable>
-            <Text style={s.tiny}>·</Text>
-            <Pressable onPress={() => setPolicy("Privacy")}>
-              <Text style={s.tiny}>Privacy</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : (
-        <KeyboardAvoidingView
-          style={s.app}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          {desktop && roster}
-          <View style={s.main}>
-            <View style={s.header}>
-              {!desktop && (
-                <IconButton
-                  name={screen === "chat" ? "menu" : "back"}
-                  label={
-                    screen === "chat" ? "Open agents" : "Back to conversation"
-                  }
-                  onPress={() =>
-                    screen === "chat" ? setDrawer(true) : setScreen("chat")
-                  }
-                />
-              )}
-              <Pressable
-                accessibilityRole="button"
-                onPress={openProfile}
-                disabled={!agent || screen === "settings"}
-                style={s.headerIdentity}
-              >
-                {screen !== "settings" && agent && (
-                  <Avatar
-                    variant={agent.avatar}
-                    size={32}
-                    active={job?.status === "running"}
+        ) : onboarding ? (
+          <Onboarding
+            api={api}
+            initialKey={config.key}
+            initialModel={config.model}
+            onComplete={finishOnboarding}
+          />
+        ) : (
+          <KeyboardAvoidingView
+            style={s.app}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            {desktop && roster}
+            <View style={s.main}>
+              <View style={s.header}>
+                {!desktop && (
+                  <IconButton
+                    name={screen === "chat" ? "menu" : "back"}
+                    label={
+                      screen === "chat" ? "Open agents" : "Back to conversation"
+                    }
+                    onPress={() =>
+                      screen === "chat" ? setDrawer(true) : setScreen("chat")
+                    }
                   />
                 )}
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text numberOfLines={1} style={s.headerTitle}>
-                    {screen === "settings"
-                      ? "aetherVM"
-                      : screen === "computer" && (!desktop || computerExpanded)
-                        ? agent?.name + "’s computer"
-                        : agent?.name || "Your workspace"}
-                  </Text>
-                  {screen !== "settings" && (
-                    <Text numberOfLines={1} style={s.headerSubtitle}>
-                      {screen === "computer"
-                        ? "Computer workspace"
-                        : job?.status === "running"
-                          ? offline
-                            ? "Reconnecting…"
-                            : currentAction
-                          : job?.status === "waiting"
-                            ? "Needs your help"
-                            : agent?.role}
-                    </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={openProfile}
+                  disabled={!agent || screen === "settings"}
+                  style={s.headerIdentity}
+                >
+                  {screen !== "settings" && agent && (
+                    <Avatar
+                      variant={agent.avatar}
+                      size={32}
+                      mood={moodFor(job?.status)}
+                    />
                   )}
-                </View>
-                {screen === "chat" && (
-                  <Icon name="down" size={12} color={C.subtle} />
-                )}
-              </Pressable>
-              <IconButton
-                name={screen === "settings" ? "close" : "computer"}
-                label={
-                  screen === "settings"
-                    ? "Close settings"
-                    : screen === "computer"
-                      ? "Open conversation"
-                      : "Open computer"
-                }
-                active={screen === "computer" || job?.status === "running"}
-                onPress={() => {
-                  setComputerExpanded(false);
-                  setScreen(screen === "chat" ? "computer" : "chat");
-                }}
-              />
-              {screen === "chat" && (
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text numberOfLines={1} style={s.headerTitle}>
+                      {screen === "settings"
+                        ? "aetherVM"
+                        : screen === "computer" &&
+                            (!desktop || computerExpanded)
+                          ? agent?.name + "’s computer"
+                          : agent?.name || "Your workspace"}
+                    </Text>
+                    {screen !== "settings" && (
+                      <Text numberOfLines={1} style={s.headerSubtitle}>
+                        {screen === "computer"
+                          ? "Computer workspace"
+                          : job?.status === "running"
+                            ? offline
+                              ? "Reconnecting…"
+                              : currentAction
+                            : job?.status === "waiting"
+                              ? "Needs your help"
+                              : agent?.role}
+                      </Text>
+                    )}
+                  </View>
+                  {screen === "chat" && (
+                    <Icon name="down" size={12} color={C.subtle} />
+                  )}
+                </Pressable>
                 <IconButton
-                  name="clock"
-                  label="Task history"
+                  name={screen === "settings" ? "close" : "computer"}
+                  label={
+                    screen === "settings"
+                      ? "Close settings"
+                      : screen === "computer"
+                        ? "Open conversation"
+                        : "Open computer"
+                  }
+                  active={screen === "computer" || job?.status === "running"}
                   onPress={() => {
-                    setHistoryOpen(true);
-                    api("/agents/" + selected + "/tasks")
-                      .then(setHistory)
-                      .catch(report);
+                    setComputerExpanded(false);
+                    setScreen(screen === "chat" ? "computer" : "chat");
                   }}
                 />
-              )}
-            </View>
-            {screen === "settings" ? (
-              settings
-            ) : screen === "computer" ? (
-              desktop && !computerExpanded ? (
-                <View style={{ flex: 1, flexDirection: "row" }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>{chat}</View>
-                  <View
-                    style={{
-                      width: 420,
-                      borderLeftWidth: 1,
-                      borderColor: C.line,
+                {screen === "chat" && (
+                  <IconButton
+                    name="clock"
+                    label="Task history"
+                    onPress={() => {
+                      setHistoryOpen(true);
+                      api("/agents/" + selected + "/tasks")
+                        .then(setHistory)
+                        .catch(report);
                     }}
-                  >
-                    <View
-                      style={[
-                        s.inline,
-                        { paddingLeft: 20, paddingRight: 6, height: 54 },
-                      ]}
-                    >
-                      <Text style={[s.smallText, { flex: 1 }]}>
-                        {agent?.name}’s computer
-                      </Text>
-                      <IconButton
-                        name="expand"
-                        label="Expand computer"
-                        onPress={() => setComputerExpanded(true)}
-                      />
-                      <IconButton
-                        name="close"
-                        label="Close computer preview"
-                        onPress={() => setScreen("chat")}
-                      />
+                  />
+                )}
+              </View>
+              <SlideSurface key={screen} style={{ flex: 1 }} from="right">
+                {screen === "settings" ? (
+                  settings
+                ) : screen === "computer" ? (
+                  desktop && !computerExpanded ? (
+                    <View style={{ flex: 1, flexDirection: "row" }}>
+                      <View style={{ flex: 1, minWidth: 0 }}>{chat}</View>
+                      <View
+                        style={{
+                          width: 420,
+                          borderLeftWidth: 1,
+                          borderColor: C.line,
+                        }}
+                      >
+                        <View
+                          style={[
+                            s.inline,
+                            { paddingLeft: 20, paddingRight: 6, height: 54 },
+                          ]}
+                        >
+                          <Text style={[s.smallText, { flex: 1 }]}>
+                            {agent?.name}’s computer
+                          </Text>
+                          <IconButton
+                            name="expand"
+                            label="Expand computer"
+                            onPress={() => setComputerExpanded(true)}
+                          />
+                          <IconButton
+                            name="close"
+                            label="Close computer preview"
+                            onPress={() => setScreen("chat")}
+                          />
+                        </View>
+                        <Computer
+                          agent={agent}
+                          api={api}
+                          initialState={computerState}
+                          setComputerState={setComputerState}
+                          report={report}
+                          onFile={previewFile}
+                          animations={config.animations}
+                          activity={
+                            job?.status === "running"
+                              ? currentAction
+                              : undefined
+                          }
+                        />
+                      </View>
                     </View>
+                  ) : (
                     <Computer
                       agent={agent}
                       api={api}
@@ -1890,488 +1953,561 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                       report={report}
                       onFile={previewFile}
                       animations={config.animations}
+                      activity={
+                        job?.status === "running" ? currentAction : undefined
+                      }
                     />
-                  </View>
-                </View>
-              ) : (
-                <Computer
-                  agent={agent}
-                  api={api}
-                  initialState={computerState}
-                  setComputerState={setComputerState}
-                  report={report}
-                  onFile={previewFile}
-                  animations={config.animations}
-                />
-              )
-            ) : (
-              chat
-            )}
-          </View>
-        </KeyboardAvoidingView>
-      )}
-      {drawer && !desktop && (
-        <Modal
-          transparent
-          animationType={config.animations ? "fade" : "none"}
-          onRequestClose={() => setDrawer(false)}
-        >
-          <View style={s.drawerScrim}>
-            <Pressable
-              accessibilityLabel="Close navigation"
-              style={StyleSheet.absoluteFill}
-              onPress={() => setDrawer(false)}
-            />
-            <View style={[s.drawer, { width: Math.min(width - 48, 338) }]}>
-              {roster}
+                  )
+                ) : (
+                  chat
+                )}
+              </SlideSurface>
             </View>
-          </View>
-        </Modal>
-      )}
-      {editing && (
-        <Sheet
-          title={"id" in editing ? "Edit agent" : "New agent"}
-          subtitle="Give a worker a name and a responsibility."
-          onClose={() => setEditing(null)}
-        >
-          <View style={s.avatarPicker}>
-            {avatarColors.map((_, i) => (
+          </KeyboardAvoidingView>
+        )}
+        {drawer && !desktop && (
+          <Modal
+            transparent
+            animationType="none"
+            onRequestClose={() => setDrawer(false)}
+          >
+            <View style={s.drawerScrim}>
               <Pressable
-                key={i}
-                accessibilityRole="button"
-                accessibilityLabel={"Avatar " + (i + 1)}
-                onPress={() => setEditing({ ...editing, avatar: i })}
-                style={[
-                  s.avatarOption,
-                  editing.avatar === i && s.avatarSelected,
-                ]}
-              >
-                <Avatar variant={i} size={42} />
-              </Pressable>
-            ))}
-          </View>
-          <Field
-            label="Name"
-            value={editing.name}
-            onChange={(name) => setEditing({ ...editing, name })}
-            placeholder="Atlas"
-          />
-          <Field
-            label="Role"
-            value={editing.role}
-            onChange={(role) => setEditing({ ...editing, role })}
-            placeholder="Software engineer"
-          />
-          <Field
-            label="Responsibilities"
-            value={editing.instructions}
-            onChange={(instructions) =>
-              setEditing({ ...editing, instructions })
-            }
-            multiline
-            placeholder="What should this agent be responsible for?"
-          />
-          {"id" in editing && (
-            <Field
-              label="Memory"
-              value={editing.memory}
-              onChange={(memory) => setEditing({ ...editing, memory })}
-              multiline
-              placeholder="Working preferences and context to remember"
-            />
-          )}
-          <Button
-            label={"id" in editing ? "Save changes" : "Create agent"}
-            onPress={saveProfile}
-            loading={busy === "agent"}
-            disabled={!editing.name.trim()}
-          />
-        </Sheet>
-      )}
-      {profile && !editing && (
-        <Sheet
-          title={profile.name}
-          subtitle={profile.role}
-          onClose={() => setProfile(null)}
-        >
-          <View style={s.profileIntro}>
-            <Avatar variant={profile.avatar} size={58} />
-            <Text style={[s.bodyText, { flex: 1 }]}>
-              {profile.instructions}
-            </Text>
-          </View>
-          <Button
-            label="Edit profile"
-            icon="edit"
-            secondary
-            onPress={() => setEditing(profile)}
-          />
-          <Section title="MEMORY">
-            <Text style={s.bodyText}>
-              {profile.memory ||
-                "No saved memories yet. Ask your agent to remember a preference, or add it in the profile."}
-            </Text>
-          </Section>
-          <Section title="SKILLS">
-            {skills.map((k) => (
-              <Row
-                key={k.id}
-                icon="book"
-                title={k.name}
-                subtitle={k.instructions}
-                onPress={() => {
-                  setProfile(null);
-                  setPrompt("Use the " + k.name + " skill to ");
-                }}
+                accessibilityLabel="Close navigation"
+                style={StyleSheet.absoluteFill}
+                onPress={() => setDrawer(false)}
               />
-            ))}
-            <Row
-              icon="plus"
-              title="Save a skill"
-              subtitle="A reusable set of instructions"
-              onPress={() => setSkillDraft({ name: "", instructions: "" })}
-            />
-          </Section>
-          <Section title="COMPUTER">
-            <Row
-              icon="computer"
-              title={profile.name + "’s computer"}
-              subtitle="Your agents share the same computer and files"
-              onPress={() => {
-                setProfile(null);
-                setScreen("computer");
+              <SlideSurface
+                from="left"
+                style={[s.drawer, { width: Math.min(width - 48, 338) }]}
+              >
+                {roster}
+              </SlideSurface>
+            </View>
+          </Modal>
+        )}
+        {editing && (
+          <Sheet
+            title={"id" in editing ? "Edit agent" : "Create agent"}
+            fullScreen
+            onClose={() => setEditing(null)}
+          >
+            <View
+              style={{
+                alignItems: "center",
+                paddingTop: 22,
+                paddingBottom: 32,
+              }}
+            >
+              <Avatar variant={editing.avatar} size={142} />
+            </View>
+            <TextInput
+              accessibilityLabel="Agent name"
+              value={editing.name}
+              onChangeText={(name) => setEditing({ ...editing, name })}
+              placeholder="Name your agent"
+              placeholderTextColor={C.subtle}
+              autoCapitalize="words"
+              maxLength={48}
+              style={{
+                backgroundColor: C.surface,
+                color: C.text,
+                fontSize: 22,
+                fontWeight: "500",
+                textAlign: "center",
+                padding: 20,
+                borderRadius: 20,
+                marginBottom: 25,
               }}
             />
-          </Section>
-          <Section title="AUTOMATIONS">
-            <Text style={s.caption}>
-              Scheduled runs are not available on this server.
-            </Text>
-          </Section>
-        </Sheet>
-      )}
-      {skillDraft && (
-        <Sheet
-          title="Save a skill"
-          subtitle="Your agent can reuse these instructions."
-          onClose={() => setSkillDraft(null)}
-        >
-          <Field
-            label="Skill name"
-            value={skillDraft.name}
-            onChange={(name) => setSkillDraft({ ...skillDraft, name })}
-          />
-          <Field
-            label="Instructions"
-            multiline
-            value={skillDraft.instructions}
-            onChange={(instructions) =>
-              setSkillDraft({ ...skillDraft, instructions })
-            }
-          />
-          <Button
-            label="Save skill"
-            onPress={saveSkill}
-            loading={busy === "skill"}
-            disabled={
-              !skillDraft.name.trim() || !skillDraft.instructions.trim()
-            }
-          />
-        </Sheet>
-      )}
-      {providerOpen && (
-        <Sheet
-          title="AI provider"
-          subtitle="Power your agents with your own Gemini key."
-          onClose={() => {
-            setProviderOpen(false);
-            setDraftKey("");
-          }}
-        >
-          <View style={[s.inline, { marginBottom: 24 }]}>
-            <View style={s.providerIcon}>
-              <Icon name="spark" color={C.accent} size={24} />
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "center",
+                flexWrap: "wrap",
+                gap: 9,
+                marginBottom: 26,
+              }}
+            >
+              {avatarColors.map((_, i) => (
+                <Pressable
+                  key={i}
+                  accessibilityRole="button"
+                  accessibilityLabel={"Face " + (i + 1)}
+                  accessibilityState={{ selected: editing.avatar === i }}
+                  onPress={() => setEditing({ ...editing, avatar: i })}
+                  style={{
+                    padding: 6,
+                    borderWidth: 2,
+                    borderRadius: 28,
+                    borderColor: editing.avatar === i ? C.text : "transparent",
+                  }}
+                >
+                  <Avatar variant={i} size={37} />
+                </Pressable>
+              ))}
             </View>
-            <View>
-              <Text style={s.rowTitle}>Google Gemini</Text>
-              <Text style={s.caption}>
-                {config.key
-                  ? "Your key is saved securely"
-                  : "Bring your own API key"}
+            <Text style={[s.sectionLabel, { marginBottom: 10 }]}>
+              WHAT SHOULD IT HELP WITH?
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 20 }}>
+              {["General", "Research", "Coding"].map((role) => (
+                <Pressable
+                  key={role}
+                  onPress={() =>
+                    setEditing({
+                      ...editing,
+                      role: role === "General" ? "General assistant" : role,
+                      instructions:
+                        role === "Coding"
+                          ? "Build software, inspect errors, test changes and verify results."
+                          : role === "Research"
+                            ? "Research using the visible browser, check primary sources, and summarize findings clearly."
+                            : "Complete useful work and verify results.",
+                    })
+                  }
+                  style={{
+                    flex: 1,
+                    alignItems: "center",
+                    paddingVertical: 13,
+                    borderRadius: 20,
+                    backgroundColor: editing.role.includes(role)
+                      ? C.accentBg
+                      : C.surface,
+                  }}
+                >
+                  <Text style={s.smallText}>{role}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Row
+              icon="edit"
+              title="More instructions"
+              subtitle="Optional"
+              onPress={() => setProfileAdvanced(!profileAdvanced)}
+              right={<Icon name={profileAdvanced ? "up" : "down"} size={16} />}
+            />
+            {profileAdvanced && (
+              <View style={{ marginTop: 15 }}>
+                <Field
+                  label="Role"
+                  value={editing.role}
+                  onChange={(role) => setEditing({ ...editing, role })}
+                  placeholder="General assistant"
+                />
+                <Field
+                  label="Instructions"
+                  value={editing.instructions}
+                  onChange={(instructions) =>
+                    setEditing({ ...editing, instructions })
+                  }
+                  multiline
+                  placeholder="How should your agent work?"
+                />
+                {"id" in editing && (
+                  <Field
+                    label="Memory"
+                    value={editing.memory}
+                    onChange={(memory) => setEditing({ ...editing, memory })}
+                    multiline
+                  />
+                )}
+              </View>
+            )}
+            <View style={{ height: 24 }} />
+            <Button
+              label={"id" in editing ? "Save changes" : "Create agent"}
+              onPress={saveProfile}
+              loading={busy === "agent"}
+              disabled={!editing.name.trim()}
+            />
+          </Sheet>
+        )}
+        {profile && !editing && (
+          <Sheet
+            title={profile.name}
+            subtitle={profile.role}
+            onClose={() => setProfile(null)}
+          >
+            <View style={s.profileIntro}>
+              <Avatar variant={profile.avatar} size={58} />
+              <Text style={[s.bodyText, { flex: 1 }]}>
+                {profile.instructions}
               </Text>
             </View>
-          </View>
-          <Field
-            label={config.key ? "Replace API key" : "API key"}
-            secret
-            value={draftKey}
-            onChange={setDraftKey}
-            placeholder={
-              config.key ? "••••••••••••••••" : "Enter your Gemini API key"
-            }
-          />
-          <Text style={[s.caption, { marginBottom: 24 }]}>
-            Stored in encrypted device storage. Sent to your AetherVM server
-            only when connecting or running a task.
-          </Text>
-          <Text style={s.fieldLabel}>Default model</Text>
-          {models.length ? (
-            models.map((m) => (
-              <Pressable
-                key={m.id}
-                accessibilityRole="button"
-                onPress={() =>
-                  persist({ ...config, model: m.id }).catch(report)
-                }
-                style={s.modelRow}
-              >
-                <Text style={[s.smallText, { flex: 1 }]}>{m.name}</Text>
-                {config.model === m.id && (
-                  <Icon name="check" color={C.accent} size={18} />
-                )}
-              </Pressable>
-            ))
-          ) : (
-            <Field
-              label="Model ID"
-              value={config.model}
-              onChange={(model) => setConfig((c) => ({ ...c, model }))}
-              placeholder="gemini-2.5-flash"
+            <Button
+              label="Edit profile"
+              icon="edit"
+              secondary
+              onPress={() => setEditing(profile)}
             />
-          )}
-          <View style={{ height: 22 }} />
-          <Button
-            label={config.key ? "Test connection" : "Connect Gemini"}
-            onPress={testConnection}
-            loading={busy === "provider"}
-          />
-          {connection && (
-            <View style={[s.inline, { marginTop: 18 }]}>
-              <Icon
-                name={connection.startsWith("Connected") ? "check" : "alert"}
-                size={17}
-                color={connection.startsWith("Connected") ? C.green : C.amber}
+            <Section title="MEMORY">
+              <Text style={s.bodyText}>
+                {profile.memory ||
+                  "No saved memories yet. Ask your agent to remember a preference, or add it in the profile."}
+              </Text>
+            </Section>
+            <Section title="SKILLS">
+              {skills.map((k) => (
+                <Row
+                  key={k.id}
+                  icon="book"
+                  title={k.name}
+                  subtitle={k.instructions}
+                  onPress={() => {
+                    setProfile(null);
+                    setPrompt("Use the " + k.name + " skill to ");
+                  }}
+                />
+              ))}
+              <Row
+                icon="plus"
+                title="Save a skill"
+                subtitle="A reusable set of instructions"
+                onPress={() => setSkillDraft({ name: "", instructions: "" })}
               />
-              <Text style={s.caption}>{connection}</Text>
-            </View>
-          )}
-          <Button
-            label="Done"
-            secondary
-            onPress={() => {
-              persist(config).catch(report);
+            </Section>
+            <Section title="COMPUTER">
+              <Row
+                icon="computer"
+                title={profile.name + "’s computer"}
+                subtitle="Your agents share the same computer and files"
+                onPress={() => {
+                  setProfile(null);
+                  setScreen("computer");
+                }}
+              />
+            </Section>
+            <Section title="AUTOMATIONS">
+              <Text style={s.caption}>
+                Scheduled runs are not available on this server.
+              </Text>
+            </Section>
+          </Sheet>
+        )}
+        {skillDraft && (
+          <Sheet
+            title="Save a skill"
+            subtitle="Your agent can reuse these instructions."
+            onClose={() => setSkillDraft(null)}
+          >
+            <Field
+              label="Skill name"
+              value={skillDraft.name}
+              onChange={(name) => setSkillDraft({ ...skillDraft, name })}
+            />
+            <Field
+              label="Instructions"
+              multiline
+              value={skillDraft.instructions}
+              onChange={(instructions) =>
+                setSkillDraft({ ...skillDraft, instructions })
+              }
+            />
+            <Button
+              label="Save skill"
+              onPress={saveSkill}
+              loading={busy === "skill"}
+              disabled={
+                !skillDraft.name.trim() || !skillDraft.instructions.trim()
+              }
+            />
+          </Sheet>
+        )}
+        {providerOpen && (
+          <Sheet
+            title="AI provider"
+            subtitle="Power your agents with your own Gemini key."
+            onClose={() => {
               setProviderOpen(false);
               setDraftKey("");
             }}
-          />
-        </Sheet>
-      )}
-      {advanced && (
-        <Sheet
-          title="Server connection"
-          subtitle="Change this only when using your own server."
-          onClose={() => setAdvanced(false)}
-        >
-          <Field
-            label="Backend address"
-            value={urlDraft}
-            onChange={setUrlDraft}
-          />
-          <Button
-            label="Save connection"
-            onPress={async () => {
-              if (!/^https:\/\/[^\s]+$/.test(urlDraft.trim())) {
-                report(
-                  new Error("Enter a valid HTTPS address."),
-                  "Invalid server address",
-                );
-                return;
-              }
-              try {
-                await persist({
-                  ...config,
-                  url: urlDraft.trim().replace(/\/+$/, ""),
-                });
-                setAdvanced(false);
-              } catch (e) {
-                report(e);
-              }
-            }}
-          />
-        </Sheet>
-      )}
-      {activity && (
-        <Sheet
-          title="Task activity"
-          subtitle={
-            inspectedJob?.status === "running"
-              ? currentAction
-              : inspectedJob?.status === "done"
-                ? "Completed"
-                : "Execution history"
-          }
-          onClose={() => {
-            setActivity(false);
-            setActivityJob(null);
-          }}
-        >
-          {inspectedJob?.events
-            ?.filter((e) => e.kind !== "text" && e.kind !== "result")
-            .map((e, i) => (
-              <View key={i} style={s.eventRow}>
-                <Icon
-                  name={e.kind === "attention" ? "help" : "check"}
-                  size={16}
-                  color={e.kind === "attention" ? C.amber : C.subtle}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.smallText}>
-                    {e.kind === "attention" ? e.text : eventLabel(e)}
-                  </Text>
-                  {activityDetails && e.args && (
-                    <Text selectable style={s.codeText}>
-                      {JSON.stringify(e.args, null, 2)}
-                    </Text>
-                  )}
-                </View>
+          >
+            <View style={[s.inline, { marginBottom: 24 }]}>
+              <View style={s.providerIcon}>
+                <Icon name="spark" color={C.accent} size={24} />
               </View>
-            ))}
-          <Row
-            icon="terminal"
-            title="Technical details"
-            onPress={() => setActivityDetails(!activityDetails)}
-            right={<Icon name={activityDetails ? "up" : "down"} size={16} />}
-          />
-          {activityDetails &&
-            inspectedJob?.events
-              ?.filter((e) => e.kind === "result")
-              .map((e, i) => (
-                <Text key={i} selectable style={s.codeText}>
-                  {e.text}
+              <View>
+                <Text style={s.rowTitle}>Google Gemini</Text>
+                <Text style={s.caption}>
+                  {config.key
+                    ? "Your key is saved securely"
+                    : "Bring your own API key"}
                 </Text>
-              ))}
-        </Sheet>
-      )}
-      {historyOpen && (
-        <Sheet
-          title="Task history"
-          subtitle={agent?.name + "’s recent work"}
-          onClose={() => setHistoryOpen(false)}
-        >
-          {history.length ? (
-            history.map((j) => (
-              <Row
-                key={j.id}
-                icon={
-                  j.status === "done"
-                    ? "check"
-                    : j.status === "running"
-                      ? "clock"
-                      : "alert"
-                }
-                title={
-                  j.status === "done"
-                    ? "Task completed"
-                    : j.status === "waiting"
-                      ? "Needs your help"
-                      : j.status === "running"
-                        ? "In progress"
-                        : j.status === "cancelled"
-                          ? "Task stopped"
-                          : "Task interrupted"
-                }
-                subtitle={
-                  j.created
-                    ? new Date(j.created * 1000).toLocaleString()
-                    : "Earlier task"
-                }
-                onPress={async () => {
-                  try {
-                    setActivityJob(await api("/tasks/" + j.id));
-                    setHistoryOpen(false);
-                    setActivity(true);
-                  } catch (e) {
-                    report(e);
-                  }
-                }}
-              />
-            ))
-          ) : (
-            <Text style={s.bodyText}>Finished work will appear here.</Text>
-          )}
-        </Sheet>
-      )}
-      {filePreview && (
-        <Sheet
-          title={filePreview.name}
-          subtitle={fileSize(filePreview.size)}
-          onClose={() => setFilePreview(null)}
-          wide
-        >
-          {/\.(png|jpg|jpeg|webp|gif)$/i.test(filePreview.name) ? (
-            <Image
-              source={{
-                uri:
-                  "data:image/" +
-                  (filePreview.name.split(".").pop() === "jpg"
-                    ? "jpeg"
-                    : filePreview.name.split(".").pop()) +
-                  ";base64," +
-                  filePreview.data,
-              }}
-              style={{ width: "100%", height: 260 }}
-              resizeMode="contain"
-            />
-          ) : /\.(txt|md|py|js|ts|tsx|jsx|json|html|css|csv|sh|yaml|yml|xml|log)$/i.test(
-              filePreview.name,
-            ) ? (
-            <Text selectable style={s.codeText}>
-              {decodeText(filePreview.data).slice(0, 40000)}
-            </Text>
-          ) : (
-            <View style={s.filePreviewEmpty}>
-              <Icon name="file" size={38} />
-              <Text style={s.bodyText}>
-                Export this file to open it in another app.
-              </Text>
+              </View>
             </View>
-          )}
-          <Button
-            label="Export file"
-            icon="download"
-            onPress={downloadFile}
-            loading={busy === "download"}
-          />
-        </Sheet>
-      )}
-      {error && (
-        <Sheet title={error.title} onClose={() => setError(null)}>
-          <Text style={s.bodyText}>{error.details}</Text>
-          <View style={{ height: 20 }} />
-          <Button label="Dismiss" onPress={() => setError(null)} />
-          <Button
-            label="Retry workspace connection"
-            secondary
-            onPress={() => {
-              setError(null);
-              if (token) {
-                restore();
-                refreshAgents().catch((e) => report(e));
-              } else login();
+            <Field
+              label={config.key ? "Replace API key" : "API key"}
+              secret
+              value={draftKey}
+              onChange={setDraftKey}
+              placeholder={
+                config.key ? "••••••••••••••••" : "Enter your Gemini API key"
+              }
+            />
+            <Text style={[s.caption, { marginBottom: 24 }]}>
+              Stored in encrypted device storage. Sent to your AetherVM server
+              only when connecting or running a task.
+            </Text>
+            <Text style={s.fieldLabel}>Default model</Text>
+            {models.length ? (
+              models.map((m) => (
+                <Pressable
+                  key={m.id}
+                  accessibilityRole="button"
+                  onPress={() =>
+                    persist({ ...config, model: m.id }).catch(report)
+                  }
+                  style={s.modelRow}
+                >
+                  <Text style={[s.smallText, { flex: 1 }]}>{m.name}</Text>
+                  {config.model === m.id && (
+                    <Icon name="check" color={C.accent} size={18} />
+                  )}
+                </Pressable>
+              ))
+            ) : (
+              <Field
+                label="Model ID"
+                value={config.model}
+                onChange={(model) => setConfig((c) => ({ ...c, model }))}
+                placeholder="gemini-2.5-flash"
+              />
+            )}
+            <View style={{ height: 22 }} />
+            <Button
+              label={config.key ? "Test connection" : "Connect Gemini"}
+              onPress={testConnection}
+              loading={busy === "provider"}
+            />
+            {connection && (
+              <View style={[s.inline, { marginTop: 18 }]}>
+                <Icon
+                  name={connection.startsWith("Connected") ? "check" : "alert"}
+                  size={17}
+                  color={connection.startsWith("Connected") ? C.green : C.amber}
+                />
+                <Text style={s.caption}>{connection}</Text>
+              </View>
+            )}
+            <Button
+              label="Done"
+              secondary
+              onPress={() => {
+                persist(config).catch(report);
+                setProviderOpen(false);
+                setDraftKey("");
+              }}
+            />
+          </Sheet>
+        )}
+        {advanced && (
+          <Sheet
+            title="Server connection"
+            subtitle="Change this only when using your own server."
+            onClose={() => setAdvanced(false)}
+          >
+            <Field
+              label="Backend address"
+              value={urlDraft}
+              onChange={setUrlDraft}
+            />
+            <Button
+              label="Save connection"
+              onPress={async () => {
+                if (!/^https:\/\/[^\s]+$/.test(urlDraft.trim())) {
+                  report(
+                    new Error("Enter a valid HTTPS address."),
+                    "Invalid server address",
+                  );
+                  return;
+                }
+                try {
+                  await persist({
+                    ...config,
+                    url: urlDraft.trim().replace(/\/+$/, ""),
+                  });
+                  setAdvanced(false);
+                } catch (e) {
+                  report(e);
+                }
+              }}
+            />
+          </Sheet>
+        )}
+        {activity && (
+          <Sheet
+            title="Task activity"
+            subtitle={
+              inspectedJob?.status === "running"
+                ? currentAction
+                : inspectedJob?.status === "done"
+                  ? "Completed"
+                  : "Execution history"
+            }
+            onClose={() => {
+              setActivity(false);
+              setActivityJob(null);
             }}
-          />
-        </Sheet>
-      )}
-      {policy && (
-        <Sheet title={policy} onClose={() => setPolicy("")}>
-          <Text style={s.bodyText}>
-            {policy === "Privacy"
-              ? "AetherVM verifies your Google identity. Your agents, conversations, task records and profiles are stored on your configured server and its database. Files and browser sessions stay in your Daytona computer. Your Gemini API key is stored securely on this device and used by the server transiently for model requests; it is not saved in the database. Gemini receives the prompts and tool results needed to perform your tasks."
-              : "AetherVM is a personal Android preview. Agents can execute commands and modify files inside your computer. Review important results and control actions through your instructions. Model and computer use are subject to the terms and usage limits of Google Gemini and your sandbox provider."}
-          </Text>
-        </Sheet>
-      )}
-    </SafeAreaView>
+          >
+            {inspectedJob?.events
+              ?.filter((e) => e.kind !== "text" && e.kind !== "result")
+              .map((e, i) => (
+                <View key={i} style={s.eventRow}>
+                  <Icon
+                    name={e.kind === "attention" ? "help" : "check"}
+                    size={16}
+                    color={e.kind === "attention" ? C.amber : C.subtle}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.smallText}>
+                      {e.kind === "attention" ? e.text : eventLabel(e)}
+                    </Text>
+                    {activityDetails && e.args && (
+                      <Text selectable style={s.codeText}>
+                        {JSON.stringify(e.args, null, 2)}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            <Row
+              icon="terminal"
+              title="Technical details"
+              onPress={() => setActivityDetails(!activityDetails)}
+              right={<Icon name={activityDetails ? "up" : "down"} size={16} />}
+            />
+            {activityDetails &&
+              inspectedJob?.events
+                ?.filter((e) => e.kind === "result")
+                .map((e, i) => (
+                  <Text key={i} selectable style={s.codeText}>
+                    {e.text}
+                  </Text>
+                ))}
+          </Sheet>
+        )}
+        {historyOpen && (
+          <Sheet
+            title="Task history"
+            subtitle={agent?.name + "’s recent work"}
+            onClose={() => setHistoryOpen(false)}
+          >
+            {history.length ? (
+              history.map((j) => (
+                <Row
+                  key={j.id}
+                  icon={
+                    j.status === "done"
+                      ? "check"
+                      : j.status === "running"
+                        ? "clock"
+                        : "alert"
+                  }
+                  title={
+                    j.status === "done"
+                      ? "Task completed"
+                      : j.status === "waiting"
+                        ? "Needs your help"
+                        : j.status === "running"
+                          ? "In progress"
+                          : j.status === "cancelled"
+                            ? "Task stopped"
+                            : "Task interrupted"
+                  }
+                  subtitle={
+                    j.created
+                      ? new Date(j.created * 1000).toLocaleString()
+                      : "Earlier task"
+                  }
+                  onPress={async () => {
+                    try {
+                      setActivityJob(await api("/tasks/" + j.id));
+                      setHistoryOpen(false);
+                      setActivity(true);
+                    } catch (e) {
+                      report(e);
+                    }
+                  }}
+                />
+              ))
+            ) : (
+              <Text style={s.bodyText}>Finished work will appear here.</Text>
+            )}
+          </Sheet>
+        )}
+        {filePreview && (
+          <Sheet
+            title={filePreview.name}
+            subtitle={fileSize(filePreview.size)}
+            onClose={() => setFilePreview(null)}
+            wide
+          >
+            {/\.(png|jpg|jpeg|webp|gif)$/i.test(filePreview.name) ? (
+              <Image
+                source={{
+                  uri:
+                    "data:image/" +
+                    (filePreview.name.split(".").pop() === "jpg"
+                      ? "jpeg"
+                      : filePreview.name.split(".").pop()) +
+                    ";base64," +
+                    filePreview.data,
+                }}
+                style={{ width: "100%", height: 260 }}
+                resizeMode="contain"
+              />
+            ) : /\.(txt|md|py|js|ts|tsx|jsx|json|html|css|csv|sh|yaml|yml|xml|log)$/i.test(
+                filePreview.name,
+              ) ? (
+              <Text selectable style={s.codeText}>
+                {decodeText(filePreview.data).slice(0, 40000)}
+              </Text>
+            ) : (
+              <View style={s.filePreviewEmpty}>
+                <Icon name="file" size={38} />
+                <Text style={s.bodyText}>
+                  Export this file to open it in another app.
+                </Text>
+              </View>
+            )}
+            <Button
+              label="Export file"
+              icon="download"
+              onPress={downloadFile}
+              loading={busy === "download"}
+            />
+          </Sheet>
+        )}
+        {error && (
+          <Sheet title={error.title} onClose={() => setError(null)}>
+            <Text style={s.bodyText}>{error.details}</Text>
+            <View style={{ height: 20 }} />
+            <Button label="Dismiss" onPress={() => setError(null)} />
+            <Button
+              label="Retry workspace connection"
+              secondary
+              onPress={() => {
+                setError(null);
+                if (token) {
+                  restore();
+                  refreshAgents().catch((e) => report(e));
+                } else login();
+              }}
+            />
+          </Sheet>
+        )}
+        {policy && (
+          <Sheet title={policy} onClose={() => setPolicy("")}>
+            <Text style={s.bodyText}>
+              {policy === "Privacy"
+                ? "AetherVM verifies your Google identity. Your agents, conversations, task records and profiles are stored on your configured server and its database. Files and browser sessions stay in your Daytona computer. Your Gemini API key is stored securely on this device and used by the server transiently for model requests; it is not saved in the database. Gemini receives the prompts and tool results needed to perform your tasks."
+                : "AetherVM is a personal Android preview. Agents can execute commands and modify files inside your computer. Review important results and control actions through your instructions. Model and computer use are subject to the terms and usage limits of Google Gemini and your sandbox provider."}
+            </Text>
+          </Sheet>
+        )}
+      </SafeAreaView>
+    </MotionContext.Provider>
   );
 }
 function decodeText(data: string) {
@@ -2396,6 +2532,7 @@ function Computer({
   report,
   onFile,
   animations,
+  activity,
 }: {
   agent?: Agent;
   api: Api;
@@ -2404,6 +2541,7 @@ function Computer({
   report: (e: any, title?: string) => void;
   onFile: (path: string) => void;
   animations: boolean;
+  activity?: string;
 }) {
   const { width, height } = useWindowDimensions();
   const [tab, setTab] = useState("screen"),
@@ -2457,7 +2595,7 @@ function Computer({
       } catch (e: any) {
         if (alive) {
           setScreenError(e.message);
-          setShot(null);
+          // Keep the last frame visible during a transient polling failure.
         }
       }
       if (alive) timer = setTimeout(poll, 1800);
@@ -2482,6 +2620,9 @@ function Computer({
       setLoading(false);
     }
   };
+  useEffect(() => {
+    connect();
+  }, [api]);
   const control = async () => {
     setInputBusy(true);
     try {
@@ -2599,7 +2740,9 @@ function Computer({
             />
             <Text style={[s.caption, { flex: 1 }]}>
               {connected && !screenError
-                ? "Connected to desktop"
+                ? activity
+                  ? "Agent working · live"
+                  : "Live computer"
                 : loading
                   ? "Starting computer…"
                   : initialState === "started"
@@ -2640,9 +2783,16 @@ function Computer({
               <View style={s.computerIllustration}>
                 <Icon name="computer" size={44} color={C.muted} />
               </View>
+              {loading && (
+                <ActivityIndicator
+                  size="small"
+                  color={C.muted}
+                  style={{ marginBottom: 18 }}
+                />
+              )}
               <Text style={s.computerTitle}>
                 {loading
-                  ? "Starting the computer…"
+                  ? "Connecting to the live screen…"
                   : screenError
                     ? "Could not connect to the desktop"
                     : agent?.name + "’s computer"}
@@ -2657,7 +2807,7 @@ function Computer({
                 loading={loading}
               />
               <Text style={[s.tiny, { textAlign: "center", marginTop: 15 }]}>
-                Starting the computer uses your sandbox provider’s resources.
+                Viewing leaves your agent in control.
               </Text>
             </View>
           ) : (
@@ -2703,10 +2853,10 @@ function Computer({
                     ? "You have control"
                     : agent?.name + " has control"}
                 </Text>
-                <Text style={s.tiny}>Live · refreshed ~2s</Text>
+                <Text style={s.tiny}>Live</Text>
               </View>
               <Button
-                label={owner === "user" ? "Hand control back" : "Take control"}
+                label={owner === "user" ? "Hand back to agent" : "Take control"}
                 icon={owner === "user" ? "arrow" : "shield"}
                 onPress={control}
                 loading={inputBusy}
@@ -2777,10 +2927,6 @@ function Computer({
                       }
                     />
                   </View>
-                  <Text style={s.tiny}>
-                    Control returns to your agent after 45 seconds without a
-                    connection.
-                  </Text>
                 </>
               ) : (
                 <Text style={[s.caption, { marginTop: 14 }]}>
@@ -3320,9 +3466,7 @@ const s = StyleSheet.create({
     width: "100%",
     maxWidth: 480,
     maxHeight: "95%",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: C.line,
+    borderRadius: 24,
     overflow: "hidden",
   },
   sheetHead: {

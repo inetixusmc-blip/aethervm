@@ -2,11 +2,12 @@
   "expo": {
     "name": "AetherVM",
     "slug": "aethervm",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "android": {
-      "package": "com.aethervm.app"
+      "package": "com.aethervm.app",
+      "versionCode": 3
     },
     "plugins": [
       "expo-secure-store",
