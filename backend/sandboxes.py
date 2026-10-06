@@ -1,5 +1,17 @@
 """No agent code ever executes on the API host."""
-import os, subprocess, shlex, hashlib, json
+import os, subprocess, shlex, hashlib, json, threading
+
+class UbuntuRequired(RuntimeError):
+    def __init__(self, box):
+        self.box=box
+        super().__init__('Existing computer needs Ubuntu migration')
+
+def verify_ubuntu(box):
+    result=box.execute('. /etc/os-release && printf "%s:%s" "$ID" "$VERSION_ID"')
+    if result['exit_code']!=0 or result.get('output','').strip()!='ubuntu:24.04':
+        raise UbuntuRequired(box)
+    box.os_name='Ubuntu 24.04 LTS'
+    return box
 
 class DockerSandbox:
     def __init__(self, user, existing=None):
@@ -30,8 +42,10 @@ class DaytonaSandbox:
             self.box = self.client.get(existing)
             if str(self.box.state).lower().split('.')[-1] != 'started': self.client.start(self.box)
         else:
-            params = CreateSandboxFromSnapshotParams(auto_stop_interval=5, labels={'aethervm-user': hashlib.sha256(user.encode()).hexdigest()})
-            if os.getenv('DAYTONA_SNAPSHOT'): params.snapshot = os.environ['DAYTONA_SNAPSHOT']
+            from ubuntu_snapshot import SNAPSHOT
+            # Never silently fall back to Daytona's Debian default.
+            params = CreateSandboxFromSnapshotParams(snapshot=os.getenv('DAYTONA_SNAPSHOT') or SNAPSHOT,
+                auto_stop_interval=5, labels={'aethervm-user': hashlib.sha256(user.encode()).hexdigest(), 'aethervm-os':'ubuntu-24.04'})
             self.box = self.client.create(params)
         self.id = self.box.id
         # The default image has no /workspace. Bootstrap before any cd into it.
@@ -48,14 +62,53 @@ class DaytonaSandbox:
     def delete(self): self.client.delete(self.box)
 
 def get_sandbox(user, existing=None):
-    return (DaytonaSandbox if os.getenv('SANDBOX_PROVIDER','daytona') == 'daytona' else DockerSandbox)(user,existing)
+    return verify_ubuntu((DaytonaSandbox if os.getenv('SANDBOX_PROVIDER','daytona') == 'daytona' else DockerSandbox)(user,existing))
+
+def migrate_ubuntu(user,old):
+    """Copy workspace to Ubuntu; retain the original machine as a recovery source."""
+    import uuid
+    archive='/tmp/aether-migration-'+uuid.uuid4().hex+'.tar.gz'
+    r=old.execute('tar -czf '+shlex.quote(archive)+' -C /workspace . && stat -c %s '+shlex.quote(archive))
+    if r['exit_code']!=0: raise RuntimeError('Could not back up the existing workspace')
+    if int(r['output'].strip())>64*1024*1024:
+        raise RuntimeError('Workspace needs a larger migration. The original computer and files are preserved.')
+    data=old.read_bytes(archive)
+    digest=hashlib.sha256(data).hexdigest()
+    new=verify_ubuntu(DaytonaSandbox(user))
+    try:
+        new.write_bytes(data,archive)
+        source=f'''import hashlib,tarfile
+from pathlib import Path
+p=Path({archive!r})
+assert hashlib.sha256(p.read_bytes()).hexdigest()=={digest!r}
+with tarfile.open(p) as t: t.extractall('/workspace',filter='data')
+print('Workspace restored')
+'''
+        result=new.execute(python_command(source))
+        if result['exit_code']!=0: raise RuntimeError('Workspace restore failed; original files preserved')
+        return new
+    except Exception:
+        try:new.stop()
+        except Exception:pass
+        raise
+
+desktop_locks={}
+desktop_lock_guard=threading.Lock()
 
 def python_command(source):
     return 'python3 -c ' + shlex.quote(source)
 
 def start_desktop(box):
+    with desktop_lock_guard: lock=desktop_locks.setdefault(box.id if hasattr(box,'id') else id(box),threading.Lock())
+    with lock: return _start_desktop(box)
+
+def _start_desktop(box):
     if not getattr(box,'_desktop_started',False):
-        box.computer().start()
+        cu=box.computer()
+        # A new SDK object is made per HTTP request; avoid restarting a running display.
+        try: running=str(cu.get_status().status).lower()=='running'
+        except Exception: running=False
+        if not running: cu.start()
         box._desktop_started=True
         if hasattr(box,'execute'):
             # Styling runs inside this agent's own sandbox and persists on disk.

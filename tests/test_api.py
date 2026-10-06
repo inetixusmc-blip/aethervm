@@ -176,7 +176,7 @@ def test_watch_running_computer_does_not_wait_for_agent_command(monkeypatch):
     monkeypatch.setenv('SANDBOX_PROVIDER','daytona')
     with main.db() as c:c.execute('INSERT OR REPLACE INTO workspaces VALUES(?,?)',('local-dev','running-box'))
     starts=[]
-    box=SimpleNamespace(box=SimpleNamespace(state='started'),computer=lambda:SimpleNamespace(start=lambda:starts.append(True)))
+    box=SimpleNamespace(box=SimpleNamespace(state='started'),execute=lambda c:{'exit_code':0,'output':'ubuntu:24.04'},computer=lambda:SimpleNamespace(start=lambda:starts.append(True)))
     monkeypatch.setattr(sandboxes,'existing_sandbox',lambda sid:box)
     h=token(); main.operation_lock(main.scope('local-dev')).acquire()
     try:

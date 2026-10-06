@@ -21,6 +21,7 @@ capacity=threading.BoundedSemaphore(4)
 locks={}; lock_guard=threading.Lock()
 cancelled={}
 operation_locks={}; control_until={}
+provision_locks={}
 def operation_lock(user):
     with lock_guard: return operation_locks.setdefault(user,threading.Lock())
 def user_controls(user): return control_until.get(user,0)>time.time()
@@ -44,6 +45,8 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS workspaces(user TEXT PRIMARY KEY,sandbox TEXT);
     CREATE TABLE IF NOT EXISTS agent_appearance(agent_id TEXT PRIMARY KEY,shape TEXT,material TEXT);
     CREATE TABLE IF NOT EXISTS agent_workspaces(user TEXT,agent_id TEXT,sandbox TEXT,PRIMARY KEY(user,agent_id));
+    CREATE TABLE IF NOT EXISTS removed_agents(agent_id TEXT PRIMARY KEY,user TEXT,removed REAL);
+    CREATE TABLE IF NOT EXISTS previous_workspaces(user TEXT,agent_id TEXT,sandbox TEXT,created REAL);
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,user TEXT,role TEXT,text TEXT);
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,user TEXT,status TEXT,events TEXT,error TEXT);''')
     c.executescript("""CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,user TEXT,name TEXT,role TEXT,instructions TEXT,avatar INTEGER,memory TEXT,created REAL);
@@ -52,7 +55,8 @@ with db() as c:
         columns={r[1] for r in c.execute('PRAGMA table_info('+table+')')}
         if 'agent_id' not in columns: c.execute('ALTER TABLE '+table+' ADD COLUMN agent_id TEXT')
         if 'created' not in columns: c.execute('ALTER TABLE '+table+' ADD COLUMN created REAL DEFAULT 0')
-    c.execute("UPDATE jobs SET status='interrupted',error='Server restarted. Start a new task.' WHERE status='running'")
+    if os.getenv('AETHERVM_MAINTENANCE')!='true':
+        c.execute("UPDATE jobs SET status='interrupted',error='Server restarted. Start a new task.' WHERE status='running'")
 def user_lock(user):
     with lock_guard: return locks.setdefault(user,threading.Lock())
 def current_user(cred:HTTPAuthorizationCredentials=Depends(auth)):
@@ -65,8 +69,9 @@ class Task(BaseModel):
     api_key:str=Field(min_length=10,max_length=300)
     model:str=Field(default='gemini-2.5-flash',pattern=r'^[a-zA-Z0-9.\-]+$')
     agent_id:str|None=None
+    edit_message_id:int|None=Field(default=None,ge=1)
 @app.get('/health')
-def health(): return {'ok':True,'provider':os.getenv('SANDBOX_PROVIDER','daytona')}
+def health(): return {'ok':True,'provider':os.getenv('SANDBOX_PROVIDER','daytona'),'version':'0.4.2'}
 @app.post('/auth/google')
 def login(body:Login):
     if os.getenv('DEV_AUTH')=='true' and body.id_token=='local-dev': info={'sub':'local-dev','name':'Developer'}
@@ -91,6 +96,24 @@ def scope(user,agent_id=None):
 def workspace_scope(agent_id:str|None=None,user=Depends(current_user)):
     return scope(user,agent_id)
 def workspace(key):
+    with lock_guard: lock=provision_locks.setdefault(key,threading.Lock())
+    with lock,provision_file_lock(key): return provision_workspace(key)
+@contextmanager
+def provision_file_lock(key):
+    # The AWS migration command and API worker share this container filesystem.
+    try: import fcntl
+    except ImportError:
+        yield
+        return
+    import hashlib,tempfile
+    from pathlib import Path
+    folder=Path(tempfile.gettempdir())/'aethervm-workspace-locks'
+    folder.mkdir(mode=0o700,exist_ok=True)
+    with (folder/hashlib.sha256(key.encode()).hexdigest()).open('a') as handle:
+        fcntl.flock(handle,fcntl.LOCK_EX)
+        try: yield
+        finally: fcntl.flock(handle,fcntl.LOCK_UN)
+def provision_workspace(key):
     user,aid=key.rsplit(':',1)
     with db() as c:
         row=c.execute('SELECT sandbox FROM agent_workspaces WHERE user=? AND agent_id=?',(user,aid)).fetchone()
@@ -101,7 +124,18 @@ def workspace(key):
             if first and first['id']==aid and old:
                 c.execute('INSERT OR IGNORE INTO agent_workspaces VALUES(?,?,?)',(user,aid,old['sandbox']))
                 row=old
-    box=get_sandbox(key,row['sandbox'] if row else None)
+    from sandboxes import UbuntuRequired,migrate_ubuntu
+    try: box=get_sandbox(key,row['sandbox'] if row else None)
+    except UbuntuRequired as exc:
+        if not row: raise HTTPException(503,'Configured snapshot is not Ubuntu 24.04. Run the Ubuntu snapshot setup on the server.')
+        try: box=migrate_ubuntu(key,exc.box)
+        except Exception as err:
+            import logging
+            logging.getLogger(__name__).warning('Ubuntu migration failed: %s',type(err).__name__)
+            raise HTTPException(503,'Ubuntu migration could not finish. Your old computer and files are preserved. Check the Ubuntu snapshot and Daytona storage quota.')
+        with db() as c: c.execute('INSERT INTO previous_workspaces VALUES(?,?,?,?)',(user,aid,row['sandbox'],time.time()))
+        try:exc.box.stop()
+        except Exception:pass
     with db() as c: c.execute('INSERT OR REPLACE INTO agent_workspaces VALUES(?,?,?)',(user,aid,box.id))
     return box
 def workspace_record(key):
@@ -270,7 +304,15 @@ def task(body:Task,user=Depends(current_user)):
     cancelled[job]=threading.Event()
     try:
         with db() as c:
-            c.execute('INSERT INTO messages(user,role,text,agent_id,created) VALUES(?,?,?,?,?)',(user,'user',body.prompt,agent['id'],time.time()))
+            if body.edit_message_id:
+                last=c.execute("SELECT id FROM messages WHERE user=? AND agent_id=? AND role='user' ORDER BY id DESC LIMIT 1",(user,agent['id'])).fetchone()
+                if not last or last['id']!=body.edit_message_id:
+                    raise HTTPException(409,'Only your latest message can be edited. Refresh the conversation.')
+                # Replaces the last turn, never replays or reverses its computer actions.
+                c.execute('DELETE FROM messages WHERE user=? AND agent_id=? AND id>?',(user,agent['id'],body.edit_message_id))
+                c.execute('UPDATE messages SET text=?,created=? WHERE user=? AND agent_id=? AND id=?',(body.prompt,time.time(),user,agent['id'],body.edit_message_id))
+            else:
+                c.execute('INSERT INTO messages(user,role,text,agent_id,created) VALUES(?,?,?,?,?)',(user,'user',body.prompt,agent['id'],time.time()))
             c.execute('INSERT INTO jobs(id,user,status,events,error,agent_id,created) VALUES(?,?,?,?,?,?,?)',(job,user,'running','[]',None,agent['id'],time.time()))
         pool.submit(run,job,user,body)
     except Exception:
@@ -338,11 +380,13 @@ class SkillBody(BaseModel):
 def resolve_agent(user,agent_id=None):
     with db() as c:
         if agent_id:
-            row=c.execute('SELECT * FROM agents WHERE user=? AND id=?',(user,agent_id)).fetchone()
+            row=c.execute('SELECT * FROM agents WHERE user=? AND id=? AND id NOT IN (SELECT agent_id FROM removed_agents)',(user,agent_id)).fetchone()
             if not row: raise HTTPException(404,'Agent not found')
             return with_appearance(c,dict(row))
-        row=c.execute('SELECT * FROM agents WHERE user=? ORDER BY created LIMIT 1',(user,)).fetchone()
+        row=c.execute('SELECT * FROM agents WHERE user=? AND id NOT IN (SELECT agent_id FROM removed_agents) ORDER BY created LIMIT 1',(user,)).fetchone()
         if not row:
+            if c.execute('SELECT 1 FROM removed_agents WHERE user=? LIMIT 1',(user,)).fetchone():
+                raise HTTPException(404,'Create or restore an assistant first')
             aid=uuid.uuid4().hex
             c.execute('INSERT INTO agents VALUES(?,?,?,?,?,?,?,?)',(aid,user,'Atlas','General assistant','Help with research, files and software. Verify your work and report results clearly.',0,'',time.time()))
             row=c.execute('SELECT * FROM agents WHERE id=?',(aid,)).fetchone()
@@ -352,10 +396,11 @@ def resolve_agent(user,agent_id=None):
 
 @app.get('/agents')
 def agents(user=Depends(current_user)):
-    resolve_agent(user)
+    with db() as c: initialized=c.execute('SELECT 1 FROM agents WHERE user=? LIMIT 1',(user,)).fetchone()
+    if not initialized: resolve_agent(user)
     with db() as c:
         result=[]
-        for r in c.execute('SELECT * FROM agents WHERE user=? ORDER BY created',(user,)):
+        for r in c.execute('SELECT * FROM agents WHERE user=? AND id NOT IN (SELECT agent_id FROM removed_agents) ORDER BY created',(user,)):
             agent=with_appearance(c,dict(r))
             job=c.execute('SELECT id,status,error,created,events FROM jobs WHERE user=? AND agent_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(user,r['id'])).fetchone()
             msg=c.execute('SELECT text,role,created FROM messages WHERE user=? AND agent_id=? ORDER BY id DESC LIMIT 1',(user,r['id'])).fetchone()
@@ -374,6 +419,36 @@ def create_agent(body:AgentProfile,user=Depends(current_user)):
         aid=uuid.uuid4().hex
         c.execute('INSERT INTO agents VALUES(?,?,?,?,?,?,?,?)',(aid,user,body.name.strip(),body.role.strip(),body.instructions,body.avatar,body.memory,time.time()))
         save_appearance(c,aid,body)
+    return resolve_agent(user,aid)
+@app.delete('/agents/{aid}')
+def remove_agent(aid:str,user=Depends(current_user)):
+    resolve_agent(user,aid)
+    key=user+':'+aid
+    lock=user_lock(key)
+    if not lock.acquire(False): raise HTTPException(409,'Stop the active task before removing this assistant')
+    try:
+        if not operation_lock(key).acquire(timeout=2): raise HTTPException(409,'Wait for the current computer action')
+        try:
+            row=workspace_record(key)
+            if row:
+                try:
+                    from sandboxes import existing_sandbox
+                    existing_sandbox(row['sandbox']).stop()
+                except Exception: pass # Auto-stop remains enabled; data stays recoverable.
+            with db() as c: c.execute('INSERT OR REPLACE INTO removed_agents VALUES(?,?,?)',(aid,user,time.time()))
+            control_until[key]=0
+            return {'ok':True}
+        finally: operation_lock(key).release()
+    finally: lock.release()
+@app.get('/removed-agents')
+def removed_agents(user=Depends(current_user)):
+    with db() as c: return [with_appearance(c,dict(r)) for r in c.execute('SELECT a.* FROM agents a JOIN removed_agents r ON r.agent_id=a.id WHERE a.user=? ORDER BY r.removed DESC',(user,))]
+@app.post('/agents/{aid}/restore')
+def restore_agent(aid:str,user=Depends(current_user)):
+    with db() as c:
+        row=c.execute('SELECT agent_id FROM removed_agents WHERE user=? AND agent_id=?',(user,aid)).fetchone()
+        if not row: raise HTTPException(404,'Removed assistant not found')
+        c.execute('DELETE FROM removed_agents WHERE user=? AND agent_id=?',(user,aid))
     return resolve_agent(user,aid)
 @app.put('/agents/{aid}')
 def edit_agent(aid:str,body:AgentProfile,user=Depends(current_user)):
@@ -400,15 +475,27 @@ def agent_tasks(aid:str,user=Depends(current_user)):
 class ProviderKey(BaseModel):
     api_key:str=Field(min_length=10,max_length=300)
     model:str|None=Field(default=None,pattern=r'^[a-zA-Z0-9.\-]+$')
+@app.post('/provider/models')
+def provider_models(body:ProviderKey,user=Depends(current_user)):
+    client=None
+    try:
+        from model_catalog import available_models
+        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=12000,retry_options=types.HttpRetryOptions(attempts=1)))
+        return {'models':available_models(client)}
+    except Exception as exc: raise HTTPException(400,task_error(exc,'model'))
+    finally:
+        if client: client.close()
+        body.api_key=''
 @app.post('/provider/test')
 def test_provider(body:ProviderKey,user=Depends(current_user)):
     client=None
     phase='model listing'
     try:
         client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=12000,retry_options=types.HttpRetryOptions(attempts=1)))
-        models=[{'id':m.name.replace('models/',''),'name':m.display_name or m.name.replace('models/','')} for m in client.models.list() if 'generateContent' in (m.supported_actions or []) and m.name and 'gemini' in m.name]
+        from model_catalog import available_models
+        models=available_models(client)
         checked=None
-        preferred=sorted(models,key=lambda m:('flash' not in m['id'],'preview' in m['id'],'lite' in m['id'],m['id']))
+        preferred=models
         checked=body.model if body.model and any(m['id']==body.model for m in models) else (preferred[0]['id'] if preferred else None)
         if not checked: raise HTTPException(400,'No Gemini text models are available to this key.')
         phase='simple text request'
@@ -447,18 +534,24 @@ def start_computer(user=Depends(workspace_scope)):
             from sandboxes import existing_sandbox
             box=existing_sandbox(row['sandbox'])
             if str(box.box.state).lower().split('.')[-1]=='started':
-                from sandboxes import start_desktop
+                from sandboxes import start_desktop,verify_ubuntu
+                verify_ubuntu(box)
                 start_desktop(box)
-                return {'state':'started','control':'user' if user_controls(user) else 'agent'}
-        except Exception: raise HTTPException(503,'Could not connect to the running desktop. Retry shortly.')
+                return {'state':'started','os':'Ubuntu 24.04 LTS','control':'user' if user_controls(user) else 'agent'}
+        except Exception:
+            # A stopped/missing display or legacy Debian image goes through provisioning.
+            pass
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'Computer is busy. Please retry shortly.')
     try:
         box=computer_box(user)
         from sandboxes import start_desktop
         start_desktop(box)
-        return {'state':'started','control':'user' if user_controls(user) else 'agent'}
+        return {'state':'started','os':'Ubuntu 24.04 LTS','control':'user' if user_controls(user) else 'agent'}
     except HTTPException: raise
-    except Exception: raise HTTPException(503,'Could not start the desktop. This Daytona snapshot must include the desktop stack.')
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning('Desktop startup failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Could not start the Ubuntu desktop. Run the server update to build its Ubuntu snapshot, then check Daytona credits and sandbox status.')
     finally: operation_lock(user).release()
 @app.get('/workspace/screen')
 def screen(user=Depends(workspace_scope)):

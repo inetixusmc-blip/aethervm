@@ -5,7 +5,7 @@ export const setItemAsync=async(k:string,v:string)=>{memory[k]=v;};export const 
 export const StatusBar=()=>null;
 export const GoogleSignin={configure:()=>{},getCurrentUser:()=>null,hasPlayServices:async()=>true,signIn:async()=>({type:'cancelled'}),signOut:async()=>{}};
 export const isSuccessResponse=(r:any)=>r.type==='success';
-export const setStringAsync=async(s:string)=>{await navigator.clipboard.writeText(s);};
+export const setStringAsync=async(s:string)=>{(window as any).__copied=s;};
 export const getDocumentAsync=async()=>({canceled:true});
 export const readAsStringAsync=async()=>'';export const writeAsStringAsync=async()=>{};export const cacheDirectory='';export const EncodingType={Base64:'base64'};
 export const isAvailableAsync=async()=>false;export const shareAsync=async()=>{};

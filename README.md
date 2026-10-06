@@ -4,7 +4,7 @@ Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gem
 
 ## Status
 
-The 0.4.1 preview has a minimal searchable conversation list, Google account
+The 0.4.2 preview has a clean conversation list, a left account sidebar, dark rounded chat bubbles, message copy and latest-message edit/resend, removable/restorable assistants and an immediate curated Gemini model picker. Activity navigation is removed. Original character states remain available; small identity avatars keep their body and eyes visible while occasional/tap bounces use the source engine. The default mobile API is the user's AWS endpoint `https://16.16.124.235`; saved custom server choices are retained and the old Render default migrates to AWS. Newly provisioned Daytona computers require the Ubuntu 24.04 snapshot; older computers migrate `/workspace` on first use while retaining the original sandbox for recovery. Run `sudo bash /opt/aethervm/deploy/aws/update.sh` to deploy and build the Ubuntu snapshot. The OS image and live provider connection still need verification on that server. See `backend/DESKTOP.md` and `VALIDATION.md`.
 profile photos and a happy bouncing character while startup finishes. The profile
 menu opens Agents, Activity and Settings. Five-step onboarding, an inline computer
 preview and the original offline
@@ -45,7 +45,7 @@ Use one API process: the task executor and cancellation flags are process-local.
 
 ### Daytona (default)
 
-Create an account at https://app.daytona.io and generate an API key. Set `DAYTONA_API_KEY`, `DAYTONA_API_URL=https://app.daytona.io/api`, `SANDBOX_PROVIDER=daytona` in backend `.env`. Each agent receives its own sandbox, with a 5-minute idle auto-stop. Stopped sandbox disk may still incur charges. Use the app's Put computer to sleep button to stop compute after a task. The standard Daytona image includes the desktop dependencies. Custom `DAYTONA_SNAPSHOT` images must provide those dependencies. The separate headless browse tool may require Playwright and Chromium installation. Provider snapshot permissions determine whether system packages can be installed.
+Create an account at https://app.daytona.io and generate an API key. Set `DAYTONA_API_KEY`, `DAYTONA_API_URL=https://app.daytona.io/api`, `SANDBOX_PROVIDER=daytona` in backend `.env`. Each agent receives its own sandbox, with a 5-minute idle auto-stop. Stopped sandbox disk may still incur charges. Use the app's Put computer to sleep button to stop compute after a task. Run `python ubuntu_snapshot.py` in the configured backend to build `aethervm-ubuntu-24-04-v1`, based on Ubuntu 24.04 with XFCE/VNC, Yaru styling and Chrome. A custom `DAYTONA_SNAPSHOT` must also be Ubuntu 24.04; an OS preflight prevents Debian fallback. The separate headless browse tool may require Playwright and Chromium installation. Provider snapshot permissions determine whether system packages can be installed.
 
 Daytona manages independent sandboxes; this app does not claim that Daytona splits a single rented VM into unlimited free workspaces.
 
@@ -81,14 +81,14 @@ npx eas-cli build:configure
 npx eas-cli build --platform android --profile preview
 ```
 
-EAS needs your Expo account and available build quota. When Google Android OAuth asks for SHA-1, use the signing certificate of the resulting build (EAS credentials or your local debug certificate). Rebuild after changing public environment variables. Install the APK, sign in with Google, then open Settings and enter your Gemini key. Use Test connection to load the models accessible to that key and choose one. The deployed HTTPS backend address is already configured; Advanced settings can point the app to a different server.
+EAS needs your Expo account and available build quota. When Google Android OAuth asks for SHA-1, use the signing certificate of the resulting build (EAS credentials or your local debug certificate). Rebuild after changing public environment variables. Install the APK, sign in with Google, then open Settings and enter your Gemini key. The curated model picker is available immediately; key-specific models refresh automatically. Test connection is an optional diagnostic for text and tool calls. The deployed HTTPS backend address is already configured; Advanced settings can point the app to a different server.
 
 ## App features
 
 - Restrained dark interface with a persistent agent roster, focused conversation and dedicated Computer surface on mobile. Wider screens can expand the computer beside the conversation.
 - Create and edit named agents with roles, instructions, avatars and persistent memory. Each agent has separate conversations and task history; each agent owns its computer.
 - Google identity verified on the server; ownership checked on every private endpoint.
-- Markdown responses, copyable code, concise activity cards, expandable technical details, and explicit waiting/error/cancelled states.
+- Markdown responses, copyable code, rounded conversation bubbles, copyable user/assistant messages, editable last turns, and explicit waiting/error/cancelled states.
 - Daytona desktop screenshots, visible browser launch, mouse/keyboard actions, and exclusive manual/agent control. A disconnected manual-control lease expires automatically.
 - Navigate workspace folders, preview and export files, and attach files up to 4 MB. Bounded terminal commands expose real output and exit status.
 - Gemini key stored in Android SecureStore, connection testing and available-model selection. Keys remain transient on the backend, outside the database.
@@ -127,4 +127,4 @@ Do not enable `DEV_AUTH=true` on an accessible server. It is a local test-only a
 
 See `DEPLOYMENT.md` for the selected Render Free + Turso Free libSQL route. `render.yaml` defines the service. The API supports `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` for durable remote storage on ephemeral hosts, and `ALLOWED_GOOGLE_EMAILS` restricts the personal deployment. Current examples contain the configured public Google Web client ID; no private provider credentials are shipped.
 
-The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.4.1. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.
+The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.4.2. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.

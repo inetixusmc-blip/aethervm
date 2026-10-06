@@ -4,4 +4,5 @@ cd /opt/aethervm
 git pull --ff-only
 docker compose -f deploy/aws/compose.yml config --quiet
 docker compose -f deploy/aws/compose.yml up -d --build --wait
+docker compose -f deploy/aws/compose.yml exec -T api python ubuntu_snapshot.py --migrate-existing
 curl --fail --silent http://127.0.0.1:8000/health

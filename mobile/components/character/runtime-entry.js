@@ -67,7 +67,8 @@ function config(){
  badgeColor:'#1d9bf0',badgeScale:1,
  expressionPool:ORIGINAL_STATE_DATA.EXPRESSION_POOLS[id],expressionWeights:{},
  expressionCadence:ORIGINAL_STATE_DATA.EXPRESSION_CADENCE[id],blinkCadence:blink||null,
- morph:MORPH_BY_STATE[id]||'none',headX:0,headY:0,headRotation:0,scaleX:1,scaleY:1,
+ // Tiny identity avatars keep their eyes/body visible. Larger task characters use every source morph.
+ morph:props.compact?'none':MORPH_BY_STATE[id]||'none',headX:0,headY:0,headRotation:0,scaleX:1,scaleY:1,
  eyeOpen:1,eyeScale:1,gazeScale:1,motionScale:1,tempo:1,particlesEnabled:props.size>=80};
 }
 const engine=new GrokBotEngine(svg,config);

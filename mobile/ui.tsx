@@ -1,27 +1,29 @@
-import React,{memo} from 'react';
-import {View,Text,TextInput,Pressable,ActivityIndicator,Modal,KeyboardAvoidingView,Platform,ScrollView,StyleSheet,useWindowDimensions} from 'react-native';
+import React,{memo,useRef,useContext} from 'react';
+import {View,Text,TextInput,Pressable,ActivityIndicator,Modal,KeyboardAvoidingView,Platform,ScrollView,StyleSheet,useWindowDimensions,Animated} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import Svg,{Path} from 'react-native-svg';
 import {C,s} from './design';
 import {MotionContext} from './components/MotionContext';
 const paths: Record<string, string> = {
-  menu: "M4 7h16M4 12h16M4 17h10",
-  plus: "M12 5v14M5 12h14",
+  home: 'M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7',
+  menu: "M4 6.5h16M4 12h12M4 17.5h16",
+  plus: "M12 4.5v15M4.5 12h15",
   close: "m6 6 12 12M6 18 18 6",
   back: "m14 5-7 7 7 7",
   chevron: "m9 5 7 7-7 7",
   down: "m6 9 6 6 6-6",
   up: "m6 15 6-6 6 6",
   send: "M12 19V5m-6 6 6-6 6 6",
-  computer: "M3 4h18v13H3zM8 21h8M12 17v4",
+  computer: "M5 4.5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2ZM8 21h8M12 17.5V21",
   settings:
-    "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z",
-  file: "M5 3h9l5 5v13H5zM14 3v6h5",
-  folder: "M3 6h7l2 2h9v12H3z",
+    "M5 6h14M5 12h14M5 18h14M9 4v4M15 10v4M10 16v4",
+  file: "M7 3h7l5 5v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a2 2 0 0 1 2-2ZM14 3v5h5M9 12h6M9 16h4",
+  folder: "M3 8V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 10h18",
   terminal: "m5 7 5 5-5 5M12 17h7",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2",
   check: "m5 12 4 4L19 6",
-  copy: "M9 8h12v13H9zM15 8V3H3v12h6",
+  copy: "M9 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2ZM16 5V4a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2",
   download: "M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5",
   search: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14m5 12 6 6",
   edit: "m14 4 6 6M4 16 16 4l4 4L8 20H4z",
@@ -33,7 +35,7 @@ const paths: Record<string, string> = {
   pause: "M8 5v14M16 5v14",
   stop: "M6 6h12v12H6z",
   expand: "M9 3H3v6M15 3h6v6M3 15v6h6M21 15v6h-6",
-  spark: "m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z",
+  spark: "M12 3c0 6-3 9-9 9 6 0 9 3 9 9 0-6 3-9 9-9-6 0-9-3-9-9Z",
   book: "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3zM12 6v16",
   alert: "M12 3 2 21h20zM12 9v5M12 17v1",
   eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6",
@@ -81,26 +83,33 @@ export function IconButton({
   onPress,
   active = false,
   disabled = false,
+  round=false,
 }: {
   name: string;
   label: string;
   onPress: () => void;
   active?: boolean;
   disabled?: boolean;
+  round?:boolean;
 }) {
+  const motion=useContext(MotionContext),press=useRef(new Animated.Value(0)).current;
+  const morph=(toValue:number)=>{if(!motion)return;Animated.spring(press,{toValue,stiffness:320,damping:16,mass:.7,useNativeDriver:false}).start()};
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
+      onPressIn={()=>morph(1)}
+      onPressOut={()=>morph(0)}
       disabled={disabled}
       style={({ pressed }) => [
         s.iconButton,
+        round&&{width:46,height:46,borderRadius:23,backgroundColor:'#272727',borderWidth:1,borderColor:'#414141'},
         active && { backgroundColor: C.accentBg },
         (pressed || disabled) && { opacity: disabled ? 0.35 : 0.7 },
       ]}
     >
-      <Icon name={name} color={active ? C.accent : C.muted} />
+      <Animated.View style={{borderRadius:press.interpolate({inputRange:[0,1],outputRange:[12,24]}),transform:[{scaleX:press.interpolate({inputRange:[0,1],outputRange:[1,1.17]})},{scaleY:press.interpolate({inputRange:[0,1],outputRange:[1,.8]})},{rotate:press.interpolate({inputRange:[0,1],outputRange:['0deg','-6deg']})}]}}><Icon name={name} size={round?24:21} color={round?C.text:active ? C.accent : C.muted} /></Animated.View>
     </Pressable>
   );
 }

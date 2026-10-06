@@ -49,6 +49,7 @@ export default function Computer({
     [visible, setVisible] = useState(true),
     [frameWidth, setFrameWidth] = useState(1);
   const screenRef = useRef<View>(null),
+    connectionVersion=useRef(0),
     terminalScroll = useRef<ScrollView>(null);
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) =>
@@ -76,6 +77,8 @@ export default function Computer({
       } catch (e: any) {
         if (alive) {
           setScreenError(e.message);
+          // Auto-stop may have slept the machine while the app was in the background.
+          try{await api('/workspace/start','POST')}catch{}
           // Keep the last frame visible during a transient polling failure.
         }
       }
@@ -88,21 +91,25 @@ export default function Computer({
     };
   }, [connected, tab, api, visible]);
   const connect = async () => {
+    const version=++connectionVersion.current;
     setLoading(true);
     setScreenError("");
     try {
       const result = await api("/workspace/start", "POST");
+      if(version!==connectionVersion.current)return;
       setComputerState(result.state);
       setOwner(result.control);
       setConnected(true);
     } catch (e: any) {
-      setScreenError(e.message);
+      if(version===connectionVersion.current)setScreenError(e.message);
     } finally {
-      setLoading(false);
+      if(version===connectionVersion.current)setLoading(false);
     }
   };
   useEffect(() => {
+    setConnected(false);setShot(null);setFiles([]);setOutputs([]);setFolder('');setOwner('agent');
     connect();
+    return()=>{connectionVersion.current++};
   }, [api]);
   const control = async () => {
     setInputBusy(true);
@@ -280,7 +287,7 @@ export default function Computer({
               </Text>
               <Text style={s.computerDescription}>
                 {screenError ||
-                  "A real Linux workspace for browsing, building, and working with your files."}
+                  "Your Ubuntu 24.04 computer for browsing, building, and working with files."}
               </Text>
               <Button
                 label={screenError ? "Reconnect" : "Open desktop"}

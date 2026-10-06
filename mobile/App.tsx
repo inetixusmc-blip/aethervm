@@ -43,18 +43,19 @@ import AppearancePicker from './components/character/AppearancePicker';
 import HomeScreen from './screens/HomeScreen';
 import ProfileImage from './components/ProfileImage';
 import StartupScreen from './components/StartupScreen';
-import BottomNavigation from './components/navigation/BottomNavigation';
+import Sidebar from './components/Sidebar';
+import {agentModels,curateModels,GeminiModel} from './models';
 import LiveComputerPreview from './components/computer/LiveComputerPreview';
 import Onboarding from "./components/Onboarding";
 import SlideSurface from "./components/SlideSurface";
 
-const DEFAULT_URL = "https://aethervm-api.onrender.com";
+const DEFAULT_URL = "https://16.16.124.235";
 const defaults: Config = {
   url: process.env.EXPO_PUBLIC_API_URL?.includes("YOUR_")
     ? DEFAULT_URL
     : process.env.EXPO_PUBLIC_API_URL || DEFAULT_URL,
   key: "",
-  model: "gemini-2.5-flash",
+  model: "gemini-3.8-flash",
   animations: true,
 };
 const emptyProfile = {
@@ -115,7 +116,7 @@ function eventLabel(e?: TaskEvent) {
   }
   return "Working";
 }
-function CopyAction({ text, code = false }: { text: string; code?: boolean }) {
+function CopyAction({ text, code = false, label='Copy message' }: { text: string; code?: boolean; label?:string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -128,7 +129,7 @@ function CopyAction({ text, code = false }: { text: string; code?: boolean }) {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={
-        copied ? "Copied" : code ? "Copy code" : "Copy response"
+        copied ? "Copied" : code ? "Copy code" : label
       }
       style={{
         minHeight: 44,
@@ -191,10 +192,12 @@ const MessageView = memo(
     message,
     agent,
     onFile,
+    onEdit,
   }: {
     message: Message;
     agent: Agent;
     onFile: (p: string) => void;
+    onEdit?:()=>void;
   }) => {
     const user = message.role === "user";
     const fileLinks = [
@@ -209,17 +212,9 @@ const MessageView = memo(
             <Text selectable style={s.messageText}>
               {message.text}
             </Text>
-            {!!message.created && (
-              <Text style={s.messageTime}>{timeLabel(message.created)}</Text>
-            )}
           </>
         ) : (
           <>
-            <View style={s.authorRow}>
-              <Avatar shape={agent.shape} material={agent.material} variant={agent.avatar} size={25} />
-              <Text style={s.authorName}>{agent.name}</Text>
-              <Text style={s.messageTime}>{timeLabel(message.created)}</Text>
-            </View>
             <Markdown
               rules={{
                 fence: (node: any) => (
@@ -259,11 +254,12 @@ const MessageView = memo(
                 onPress={() => onFile(m[1].replace("/workspace/", ""))}
               />
             ))}
-            <View style={s.messageActions}>
-              <CopyAction text={message.text} />
-            </View>
           </>
         )}
+        {message.id>0&&<View style={s.messageActions}>
+          <CopyAction text={message.text} label={user?'Copy your message':'Copy response'}/>
+          {onEdit&&<IconButton name="edit" label="Edit last message" onPress={onEdit}/>}
+        </View>}
       </View>
     );
   },
@@ -349,14 +345,15 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       name: string;
       instructions: string;
     } | null>(null),
-    [activityJob, setActivityJob] = useState<Job | null>(null),
-    [activity, setActivity] = useState(false),
-    [activityDetails, setActivityDetails] = useState(false),
     [history, setHistory] = useState<Job[]>([]),
-    [historyOpen, setHistoryOpen] = useState(false),
     [providerOpen, setProviderOpen] = useState(false),
+    [modelPicker, setModelPicker] = useState(false),
+    [removedOpen,setRemovedOpen]=useState(false),
+    [removed,setRemoved]=useState<Agent[]>([]),
+    [removeConfirm,setRemoveConfirm]=useState(false),
+    [editMessage,setEditMessage]=useState<Message|null>(null),
     [draftKey, setDraftKey] = useState(""),
-    [models, setModels] = useState<{ id: string; name: string }[]>([]),
+    [models, setModels] = useState<GeminiModel[]>(agentModels),
     [connection, setConnection] = useState(""),
     [advanced, setAdvanced] = useState(false),
     [urlDraft, setUrlDraft] = useState(""),
@@ -483,6 +480,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
             /^https:\/\//.test(saved.url) && !saved.url.includes("YOUR_")
               ? saved.url.trim().replace(/\/+$/, "")
               : DEFAULT_URL;
+          if(saved.url==='https://aethervm-api.onrender.com')saved.url=DEFAULT_URL;
           setConfig(saved);
         }
         setName((await SecureStore.getItemAsync("name")) || "");
@@ -508,6 +506,15 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
     });
   }, []);
+  useEffect(()=>{
+    if(!ready||!token||!config.key)return;
+    let alive=true;
+    api('/provider/models','POST',{api_key:config.key}).then(r=>{
+      const available=curateModels(r.models||[]);
+      if(alive&&available.length)setModels(available);
+    }).catch(()=>{}); // Cached built-in choices remain usable during provider outages.
+    return()=>{alive=false};
+  },[ready,token,config.key,config.url]);
   useEffect(() => {
     if (!token || !ready) return;
     let alive = true;
@@ -546,6 +553,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     setMessages([]);
     setJob(null);
     setPrompt("");
+    setEditMessage(null);
     setAttachments([]);
     restore();
     if (selected) SecureStore.setItemAsync("agent", selected);
@@ -649,12 +657,13 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         api_key: config.key,
         model: config.model,
         agent_id: aid,
+        ...(editMessage?{edit_message_id:editMessage.id}:{}),
       });
       setSelected(aid);
       setScreen("chat");
       refreshVersion.current++;
       setMessages((m) => [
-        ...m,
+        ...(editMessage?m.filter(x=>x.id<editMessage.id):m),
         {
           id: Date.now(),
           role: "user",
@@ -663,6 +672,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         },
       ]);
       setPrompt("");
+      setEditMessage(null);
       setAttachments([]);
       setJob({
         id: result.id,
@@ -773,6 +783,20 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       report(e, "Could not load skills");
     }
   };
+  const manageAgent=async(id:string)=>{
+    const a=agents.find(a=>a.id===id);if(!a)return;
+    setSelected(id);setProfile(a);
+    try{setSkills(await api('/agents/'+id+'/skills'))}catch(e){report(e)}
+  };
+  const removeAgent=async()=>{
+    if(!profile)return;setBusy('remove');
+    try{
+      await api('/agents/'+profile.id,'DELETE');
+      const items=await refreshAgents();
+      if(selected===profile.id)setSelected(items[0]?.id||'');
+      setProfile(null);setRemoveConfirm(false);setScreen('home');
+    }catch(e){report(e,'Could not remove assistant')}finally{setBusy('')}
+  };
   const saveSkill = async () => {
     if (!skillDraft || !agent) return;
     setBusy("skill");
@@ -800,7 +824,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         api_key: key,
         model: config.model,
       });
-      setModels(result.models);
+      setModels(curateModels(result.models));
       await persist({
         ...config,
         key,
@@ -890,7 +914,6 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       setBusy("");
     }
   };
-  const inspectedJob = activityJob || job;
   const currentAction =
     job?.control === "user"
       ? "Waiting for you to hand control back"
@@ -930,7 +953,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         windowSize={7}
         renderItem={({ item }) =>
           agent ? (
-            <MessageView message={item} agent={agent} onFile={previewFile} />
+            <MessageView message={item} agent={agent} onFile={previewFile} onEdit={item.role==='user'&&item.id===messages.filter(m=>m.role==='user').at(-1)?.id&&job?.status!=='running'?()=>{setEditMessage(item);setPrompt(item.text);setAttachments([])}:undefined} />
           ) : null
         }
         ListHeaderComponent={
@@ -1003,22 +1026,10 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                   onFile={previewFile}
                 />
               ) : null}
-              {job?.status === "running" && (
-                <Pressable
-                  accessibilityRole="button"
-                  style={s.activityStrip}
-                  onPress={() => setActivity(true)}
-                >
-                  <ActivityIndicator size="small" color={C.accent} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.smallText}>{agent.name} is working</Text>
-                    <Text style={s.caption}>
-                      {offline ? "Reconnecting to your task…" : currentAction}
-                    </Text>
-                  </View>
-                  <Icon name="chevron" size={16} />
-                </Pressable>
-              )}
+              {job?.status==='running'&&<View style={{alignItems:'flex-start',paddingVertical:16,gap:6}}>
+                <Avatar shape={agent.shape} material={agent.material} size={64} state={taskState(job)} interactive/>
+                <Text accessibilityLiveRegion="polite" style={s.caption}>{offline?'Reconnecting…':currentAction}</Text>
+              </View>}
               {job && ['running','waiting'].includes(job.status) && <LiveComputerPreview api={workspaceApi} action={currentAction} onExpand={()=>setScreen('computer')} onControl={async()=>{setScreen('computer');try{await workspaceApi('/workspace/control','POST',{owner:'user'})}catch(e){report(e)}}} />}
               {attention && (
                 <View style={s.attention}>
@@ -1035,17 +1046,6 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               )}
               {job?.status === "done" && (
                 <>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => setActivity(true)}
-                    style={s.completion}
-                  >
-                    <Icon name="check" size={15} color={C.green} />
-                    <Text style={[s.tiny, { color: C.muted }]}>
-                      Task completed
-                    </Text>
-                    <Text style={s.tiny}>{timeLabel(job.created)}</Text>
-                  </Pressable>
                   {artifactPaths.map((path) => (
                     <Row
                       key={path}
@@ -1108,6 +1108,9 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
             <Icon name="chevron" size={15} color={C.accent} />
           </Pressable>
         )}
+        {editMessage&&<View style={[s.inline,{paddingHorizontal:8,paddingBottom:8}]}><Icon name="edit" size={17}/><Text style={[s.caption,{flex:1}]}>Editing your last message</Text><IconButton name="close" label="Cancel message edit" onPress={()=>{setEditMessage(null);setPrompt('')}}/></View>}
+        <View style={{alignItems:'flex-end',paddingBottom:5}}><Pressable accessibilityRole="button" accessibilityLabel="Choose model" onPress={()=>setModelPicker(true)} style={s.modelButton}><Text style={s.tiny}>{models.find(m=>m.id===config.model)?.name||config.model.replace('gemini-','Gemini ')}</Text><Icon name="down" size={13}/></Pressable></View>
+        <View style={{flexDirection:'row',alignItems:'flex-end',gap:10}}><View style={{paddingBottom:4}}><IconButton round name="plus" label="Attach a file" disabled={!!busy||job?.status==='running'} onPress={attachFile}/></View>
         <View style={s.composer}>
           {attachments.length > 0 && (
             <View style={s.attachments}>
@@ -1139,25 +1142,6 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
             style={s.composerInput}
           />
           <View style={s.composerTools}>
-            <IconButton
-              name="plus"
-              label="Attach a file"
-              disabled={!!busy || job?.status === "running"}
-              onPress={attachFile}
-            />
-            <View style={{ flex: 1 }} />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setProviderOpen(true)}
-              style={s.modelButton}
-            >
-              <Text style={s.tiny}>
-                {config.model
-                  .replace("gemini-", "Gemini ")
-                  .replaceAll("-", " ")}
-              </Text>
-              <Icon name="down" size={13} color={C.subtle} />
-            </Pressable>
             {job?.status === "running" ? (
               <Pressable
                 accessibilityRole="button"
@@ -1191,6 +1175,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               </Pressable>
             )}
           </View>
+        </View>
         </View>
         <Text style={s.composerNote}>
           {busy === "upload"
@@ -1264,11 +1249,6 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           subtitle="Each agent has its own computer · Files stay between tasks"
           onPress={() => setScreen("computer")}
         />
-        <Row
-          icon="clock"
-          title="Automations"
-          subtitle="Scheduled runs are not available on this server"
-        />
       </Section>
       <Section title="ADVANCED">
         <Row
@@ -1299,7 +1279,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         subtitle="Replay the guided setup"
         onPress={() => setOnboarding(true)}
       />
-      <Text style={s.settingsFooter}>AetherVM · Android preview 0.4.1</Text>
+      <Text style={s.settingsFooter}>AetherVM · Android preview 0.4.2</Text>
     </ScrollView>
   );
   if (!ready || !launchReady)
@@ -1363,91 +1343,17 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           >
 
             <View style={s.main}>
-              {screen === 'home' ? null : ['agents','activity','settings'].includes(screen) ? <View style={[s.header,{borderBottomWidth:0,paddingHorizontal:24}]}><Brand size={22}/><Text style={[s.brandName,{fontSize:18,marginLeft:10}]}>AetherVM</Text></View> : <>
-              <View style={s.header}>
-                {(
-                  <IconButton
-                    name="back"
-                    label={
-                      screen === "chat" ? "Back Home" : "Back to conversation"
-                    }
-                    onPress={() =>
-                      setScreen(screen === "computer" ? "chat" : "home")
-                    }
-                  />
-                )}
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={openProfile}
-                  disabled={!agent || screen === "settings"}
-                  style={s.headerIdentity}
-                >
-                  {screen !== "settings" && agent && (
-                    <Avatar
-                      shape={agent.shape} material={agent.material} variant={agent.avatar}
-                      size={32}
-                      state={busy === "upload" ? "uploading" : busy === "send" ? "sending" : prompt ? "listening" : taskState(job)}
-                    />
-                  )}
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text numberOfLines={1} style={s.headerTitle}>
-                      {screen === "settings"
-                        ? "aetherVM"
-                        : screen === "computer" &&
-                            (!desktop || computerExpanded)
-                          ? agent?.name + "’s computer"
-                          : agent?.name || "Your workspace"}
-                    </Text>
-                    {screen !== "settings" && (
-                      <Text numberOfLines={1} style={s.headerSubtitle}>
-                        {screen === "computer"
-                          ? "Computer workspace"
-                          : job?.status === "running"
-                            ? offline
-                              ? "Reconnecting…"
-                              : currentAction
-                            : job?.status === "waiting"
-                              ? "Needs your help"
-                              : agent?.role}
-                      </Text>
-                    )}
-                  </View>
-                  {screen === "chat" && (
-                    <Icon name="down" size={12} color={C.subtle} />
-                  )}
-                </Pressable>
-                <IconButton
-                  name={screen === "settings" ? "close" : "computer"}
-                  label={
-                    screen === "settings"
-                      ? "Close settings"
-                      : screen === "computer"
-                        ? "Open conversation"
-                        : "Open computer"
-                  }
-                  active={screen === "computer" || job?.status === "running"}
-                  onPress={() => {
-                    setComputerExpanded(false);
-                    setScreen(screen === "chat" ? "computer" : "chat");
-                  }}
-                />
-                {screen === "chat" && (
-                  <IconButton
-                    name="clock"
-                    label="Task history"
-                    onPress={() => {
-                      setHistoryOpen(true);
-                      api("/agents/" + selected + "/tasks")
-                        .then(setHistory)
-                        .catch(report);
-                    }}
-                  />
-                )}
-              </View>
-              </>}
+              {screen!=='home'&&<View style={s.header}>
+                <IconButton round name="back" label={screen==='chat'||screen==='settings'?'Back Home':'Back to conversation'} onPress={()=>setScreen(screen==='computer'?'chat':'home')}/>
+                {screen==='settings'?<Text style={[s.headerTitle,{flex:1,paddingLeft:10}]}>Settings</Text>:<View style={s.headerIdentity}>
+                  {agent&&<Avatar shape={agent.shape} material={agent.material} size={40} interactive state={busy==='upload'?'uploading':busy==='send'?'sending':prompt?'listening':taskState(job)}/>}
+                  <Pressable accessibilityRole="button" accessibilityLabel="Assistant profile" onPress={openProfile} style={{flex:1,minWidth:0}}><Text numberOfLines={1} style={s.headerTitle}>{screen==='computer'?`${agent?.name||'Assistant'}’s computer`:agent?.name||'Your assistant'}</Text></Pressable>
+                </View>}
+                <IconButton round name={screen==='settings'?'menu':screen==='computer'?'back':'computer'} label={screen==='settings'?'Open sidebar':screen==='computer'?'Open conversation':'Open computer'} onPress={()=>{if(screen==='settings')setAccountMenu(true);else{setComputerExpanded(false);setScreen(screen==='computer'?'chat':'computer')}}}/>
+              </View>}
               <SlideSurface key={screen} style={{ flex: 1 }} from="right">
-                {['home','agents','activity'].includes(screen) ? (
-                  <HomeScreen name={name} photo={photo} agents={agents} mode={screen as 'home'|'agents'|'activity'} onAccount={()=>setAccountMenu(true)} onOpen={id=>{setSelected(id);setScreen('chat')}} onCreate={()=>{setProfileAdvanced(false);setEditing({...emptyProfile})}}/>
+                {screen==='home' ? (
+                  <HomeScreen name={name} photo={photo} agents={agents} onAccount={()=>setAccountMenu(true)} onOpen={id=>{setSelected(id);setScreen('chat')}} onManage={manageAgent} onCreate={()=>{setProfileAdvanced(false);setEditing({...emptyProfile})}}/>
                 ) : screen === "settings" ? (
                   settings
                 ) : screen === "computer" ? (
@@ -1515,15 +1421,16 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                   chat
                 )}
               </SlideSurface>
-              {['agents','activity','settings'].includes(screen)&&<BottomNavigation selected={screen} onSelect={setScreen}/>}
             </View>
           </KeyboardAvoidingView>
         )}
-        {accountMenu&&<Sheet title={name||'Your account'} subtitle={email||'Signed in with Google'} onClose={()=>setAccountMenu(false)}>
-          <View style={{alignItems:'center',paddingVertical:24}}><ProfileImage name={name} photo={photo} size={72}/></View>
-          <Row icon="spark" title="Your Aethers" onPress={()=>{setAccountMenu(false);setScreen('agents')}}/>
-          <Row icon="clock" title="Activity" onPress={()=>{setAccountMenu(false);setScreen('activity')}}/>
-          <Row icon="settings" title="Settings" onPress={()=>{setAccountMenu(false);setScreen('settings')}}/>
+        {accountMenu&&<Sidebar name={name} email={email} photo={photo} agents={agents} onClose={()=>setAccountMenu(false)} onHome={()=>{setAccountMenu(false);setScreen('home')}} onOpen={id=>{setAccountMenu(false);setSelected(id);setScreen('chat')}} onCreate={()=>{setAccountMenu(false);setEditing({...emptyProfile});setProfileAdvanced(false)}} onSettings={()=>{setAccountMenu(false);setScreen('settings')}} onRemoved={()=>{setAccountMenu(false);setRemovedOpen(true);api('/removed-agents').then(setRemoved).catch(report)}}/>}
+        {removedOpen&&<Sheet title="Removed assistants" subtitle="Restore an assistant with its conversation and files." onClose={()=>setRemovedOpen(false)}>
+          {removed.length?removed.map(a=><Row key={a.id} icon="refresh" title={a.name} subtitle="Restore assistant" onPress={async()=>{try{await api('/agents/'+a.id+'/restore','POST');await refreshAgents();setRemoved(items=>items.filter(i=>i.id!==a.id))}catch(e){report(e)}}}/>):<Text style={s.bodyText}>No removed assistants.</Text>}
+        </Sheet>}
+        {modelPicker&&<Sheet title="Choose a model" subtitle="Models for chatting, reasoning and computer tasks." onClose={()=>setModelPicker(false)}>
+          {models.map(m=><Row key={m.id} icon="spark" title={m.name} subtitle={m.description} right={config.model===m.id?<Icon name="check" color={C.text}/>:undefined} onPress={()=>{persist({...config,model:m.id}).catch(report);setModelPicker(false)}}/>)}
+          {!config.key&&<Button label="Add Gemini API key" onPress={()=>{setModelPicker(false);setProviderOpen(true)}}/>}
         </Sheet>}
         {editing && (
           <Sheet
@@ -1641,7 +1548,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           <Sheet
             title={profile.name}
             subtitle={profile.role}
-            onClose={() => setProfile(null)}
+            onClose={() => {setProfile(null);setRemoveConfirm(false)}}
           >
             <View style={s.profileIntro}>
               <Avatar shape={profile.shape} material={profile.material} variant={profile.avatar} size={58} />
@@ -1692,11 +1599,8 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 }}
               />
             </Section>
-            <Section title="AUTOMATIONS">
-              <Text style={s.caption}>
-                Scheduled runs are not available on this server.
-              </Text>
-            </Section>
+            <Row icon="trash" title="Remove assistant" subtitle="You can restore it later, including its files." onPress={()=>setRemoveConfirm(true)}/>
+            {removeConfirm&&<View style={{paddingTop:12,gap:8}}><Text style={s.caption}>Remove {profile.name} from your assistants? Its computer will stop and its files will stay available for restore.</Text><Button label="Remove assistant" icon="trash" onPress={removeAgent} loading={busy==='remove'}/><Button label="Keep assistant" secondary onPress={()=>setRemoveConfirm(false)}/></View>}
           </Sheet>
         )}
         {skillDraft && (
@@ -1808,7 +1712,8 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               label="Done"
               secondary
               onPress={() => {
-                persist(config).catch(report);
+                const key=draftKey.trim()||config.key;
+                persist({...config,key}).catch(report);
                 setProviderOpen(false);
                 setDraftKey("");
               }}
@@ -1847,107 +1752,6 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 }
               }}
             />
-          </Sheet>
-        )}
-        {activity && (
-          <Sheet
-            title="Task activity"
-            subtitle={
-              inspectedJob?.status === "running"
-                ? currentAction
-                : inspectedJob?.status === "done"
-                  ? "Completed"
-                  : "Execution history"
-            }
-            onClose={() => {
-              setActivity(false);
-              setActivityJob(null);
-            }}
-          >
-            {inspectedJob?.events
-              ?.filter((e) => e.kind !== "text" && e.kind !== "result")
-              .map((e, i) => (
-                <View key={i} style={s.eventRow}>
-                  <Icon
-                    name={e.kind === "attention" ? "help" : "check"}
-                    size={16}
-                    color={e.kind === "attention" ? C.amber : C.subtle}
-                  />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.smallText}>
-                      {e.kind === "attention" ? e.text : eventLabel(e)}
-                    </Text>
-                    {activityDetails && e.args && (
-                      <Text selectable style={s.codeText}>
-                        {JSON.stringify(e.args, null, 2)}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-              ))}
-            <Row
-              icon="terminal"
-              title="Technical details"
-              onPress={() => setActivityDetails(!activityDetails)}
-              right={<Icon name={activityDetails ? "up" : "down"} size={16} />}
-            />
-            {activityDetails &&
-              inspectedJob?.events
-                ?.filter((e) => e.kind === "result")
-                .map((e, i) => (
-                  <Text key={i} selectable style={s.codeText}>
-                    {e.text}
-                  </Text>
-                ))}
-          </Sheet>
-        )}
-        {historyOpen && (
-          <Sheet
-            title="Task history"
-            subtitle={agent?.name + "’s recent work"}
-            onClose={() => setHistoryOpen(false)}
-          >
-            {history.length ? (
-              history.map((j) => (
-                <Row
-                  key={j.id}
-                  icon={
-                    j.status === "done"
-                      ? "check"
-                      : j.status === "running"
-                        ? "clock"
-                        : "alert"
-                  }
-                  title={
-                    j.status === "done"
-                      ? "Task completed"
-                      : j.status === "waiting"
-                        ? "Needs your help"
-                        : j.status === "running"
-                          ? "In progress"
-                          : j.status === "cancelled"
-                            ? "Task stopped"
-                            : "Task interrupted"
-                  }
-                  subtitle={
-                    j.created
-                      ? new Date(j.created * 1000).toLocaleString()
-                      : "Earlier task"
-                  }
-                  onPress={async () => {
-                    try {
-                      setActivityJob(await api("/tasks/" + j.id));
-                      setHistoryOpen(false);
-                      setActivity(true);
-                    } catch (e) {
-                      report(e);
-                    }
-                  }}
-                />
-              ))
-            ) : (
-              <Text style={s.bodyText}>Finished work will appear here.</Text>
-            )}
           </Sheet>
         )}
         {filePreview && (

@@ -35,4 +35,4 @@ export type Api = (
   body?: any,
   overrideToken?: string,
 ) => Promise<any>;
-export type Screen = "home" | "agents" | "activity" | "chat" | "computer" | "settings";
+export type Screen = "home" | "chat" | "computer" | "settings";

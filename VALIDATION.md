@@ -1,8 +1,8 @@
-# AetherVM 0.4.1 validation — 6 October 2026
+# AetherVM 0.4.2 validation — 6 October 2026
 
 ## Completed locally
 
-- 35 backend tests pass, including auth, account/agent ownership, tool history and
+- 41 backend tests pass, including auth, account/agent ownership, tool history and
   Gemini signature/image responses, handoff pause, cancellation-related paths,
   screenshot compatibility, appearance persistence for all 18 shapes and legacy
   edits preserving appearance.
@@ -29,7 +29,7 @@
 Native WebView rendering/performance on Android; real Google OAuth and Gemini
 provider setup; real Daytona live desktop, manual handoff, uploads/downloads,
 reconnect, reduced-motion system preference and keyboard behavior on Android.
-Browser fixtures do not prove these live integrations. The 0.4.1 CI UI suite
+Browser fixtures do not prove these live integrations. The 0.4.2 CI UI suite
 also checks source bouncing geometry during startup, Google photo rendering,
 minimal Home navigation and search. Its result is recorded by the build run.
 
@@ -37,9 +37,20 @@ The user deployed the backend on EC2 and verified HTTPS health, service startup
 and certificate renewal. EC2 port 22 is unreachable from this execution
 environment, so the latest source changes require the documented update command
 in the user's existing SSH session. Live Gemini and app-terminal recovery remain
-unverified. A live Daytona Debian 13/XFCE desktop was inspected and themed;
-this does not upgrade its OS to Ubuntu. See `deploy/aws/README.md` for the
+unverified. The previous Debian desktop was inspected earlier. The new Ubuntu 24.04 image, OS gate and preservation-first workspace migration are in 0.4.2; live Daytona migration remains unverified until deployment. See `deploy/aws/README.md` for the
 concrete deployment/update/verification procedure.
 
 Native APK status is recorded by the latest GitHub Actions run; do not infer
 APK success from Metro compilation alone.
+
+## 0.4.2 revision checks
+
+41 backend tests pass locally, including recoverable assistant removal/restore,
+active-task removal rejection, account-scoped atomic editing of the last user
+turn, automatic model-listing without inference, specialist-model filtering,
+Ubuntu release checking and avoiding restarts of running desktops. TypeScript
+and all 702 original shape/state comparisons pass. CI checks the sidebar,
+chat bubbles, copy/edit, remove/restore, immediate models and continuous source
+character rendering during work, plus the Ubuntu image build and desktop smoke
+test. CI outcomes are recorded by the actual build run. Native credentials and
+computer requests in browser QA are fixtures.
