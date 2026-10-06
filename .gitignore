@@ -11,3 +11,17 @@ mobile/android/local.properties
 .gradle/
 build/
 dist/
+*.pem
+*.key
+*.p12
+*.pfx
+.env.*
+!.env.example
+aws-known-hosts
+
+.venv
+qa/preview.js
+qa/preview.html
+qa/*.png
+qa/*.pdf
+qa/results.json

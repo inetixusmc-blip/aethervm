@@ -15,6 +15,7 @@ from sandboxes import get_sandbox, tool, python_command
 app=FastAPI(title='AetherVM API')
 auth=HTTPBearer()
 pool=ThreadPoolExecutor(max_workers=4)
+capacity=threading.BoundedSemaphore(4)
 locks={}; lock_guard=threading.Lock()
 cancelled={}
 operation_locks={}; control_until={}
@@ -22,12 +23,12 @@ def operation_lock(user):
     with lock_guard: return operation_locks.setdefault(user,threading.Lock())
 def user_controls(user): return control_until.get(user,0)>time.time()
 @contextmanager
-def agent_operation(user,job):
+def agent_operation(key,job):
     while True:
         if cancelled[job].is_set(): raise RuntimeError("Task cancelled")
-        lock=operation_lock(user)
+        lock=operation_lock(key)
         lock.acquire()
-        if not user_controls(user): break
+        if not user_controls(key): break
         lock.release()
         cancelled[job].wait(.3)
     try: yield
@@ -39,6 +40,8 @@ def db():
 with db() as c:
     c.executescript('''CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user TEXT,expires REAL);
     CREATE TABLE IF NOT EXISTS workspaces(user TEXT PRIMARY KEY,sandbox TEXT);
+    CREATE TABLE IF NOT EXISTS agent_appearance(agent_id TEXT PRIMARY KEY,shape TEXT,material TEXT);
+    CREATE TABLE IF NOT EXISTS agent_workspaces(user TEXT,agent_id TEXT,sandbox TEXT,PRIMARY KEY(user,agent_id));
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,user TEXT,role TEXT,text TEXT);
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,user TEXT,status TEXT,events TEXT,error TEXT);''')
     c.executescript("""CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,user TEXT,name TEXT,role TEXT,instructions TEXT,avatar INTEGER,memory TEXT,created REAL);
@@ -81,11 +84,32 @@ def login(body:Login):
 def logout(cred:HTTPAuthorizationCredentials=Depends(auth),user=Depends(current_user)):
     with db() as c: c.execute('DELETE FROM sessions WHERE token=?',(cred.credentials,))
     return {'ok':True}
-def workspace(user):
-    with db() as c: row=c.execute('SELECT sandbox FROM workspaces WHERE user=?',(user,)).fetchone()
-    box=get_sandbox(user,row['sandbox'] if row else None)
-    with db() as c: c.execute('INSERT OR REPLACE INTO workspaces VALUES(?,?)',(user,box.id))
+def scope(user,agent_id=None):
+    return user+':'+resolve_agent(user,agent_id)['id']
+def workspace_scope(agent_id:str|None=None,user=Depends(current_user)):
+    return scope(user,agent_id)
+def workspace(key):
+    user,aid=key.rsplit(':',1)
+    with db() as c:
+        row=c.execute('SELECT sandbox FROM agent_workspaces WHERE user=? AND agent_id=?',(user,aid)).fetchone()
+        # Preserve the account's existing files on its oldest agent; never share them with other agents.
+        if not row:
+            first=c.execute('SELECT id FROM agents WHERE user=? ORDER BY created,rowid LIMIT 1',(user,)).fetchone()
+            old=c.execute('SELECT sandbox FROM workspaces WHERE user=?',(user,)).fetchone()
+            if first and first['id']==aid and old:
+                c.execute('INSERT OR IGNORE INTO agent_workspaces VALUES(?,?,?)',(user,aid,old['sandbox']))
+                row=old
+    box=get_sandbox(key,row['sandbox'] if row else None)
+    with db() as c: c.execute('INSERT OR REPLACE INTO agent_workspaces VALUES(?,?,?)',(user,aid,box.id))
     return box
+def workspace_record(key):
+    user,aid=key.rsplit(':',1)
+    with db() as c:
+        row=c.execute('SELECT sandbox FROM agent_workspaces WHERE user=? AND agent_id=?',(user,aid)).fetchone()
+        if row:return row
+        first=c.execute('SELECT id FROM agents WHERE user=? ORDER BY created,rowid LIMIT 1',(user,)).fetchone()
+        if first and first['id']==aid:return c.execute('SELECT sandbox FROM workspaces WHERE user=?',(user,)).fetchone()
+        return None
 @app.get('/messages')
 def messages(agent_id:str|None=None,user=Depends(current_user)):
     agent=resolve_agent(user,agent_id)
@@ -93,11 +117,12 @@ def messages(agent_id:str|None=None,user=Depends(current_user)):
 @app.delete('/messages')
 def clear(agent_id:str|None=None,user=Depends(current_user)):
     agent=resolve_agent(user,agent_id)
-    if not user_lock(user).acquire(False): raise HTTPException(409,'Stop the active task first')
+    key=scope(user,agent['id'])
+    if not user_lock(key).acquire(False): raise HTTPException(409,'Stop the active task first')
     try:
         with db() as c: c.execute('DELETE FROM messages WHERE user=? AND agent_id=?',(user,agent['id']))
         return {'ok':True}
-    finally: user_lock(user).release()
+    finally: user_lock(key).release()
 def emit(job,event):
     with db() as c:
         events=json.loads(c.execute('SELECT events FROM jobs WHERE id=?',(job,)).fetchone()[0]); events.append(event)
@@ -137,10 +162,12 @@ def task_error(exc,stage):
 def run(job,user,body):
     client=None
     stage='workspace'
+    key=scope(user,body.agent_id)
     try:
         agent=resolve_agent(user,body.agent_id)
+        key=scope(user,agent['id'])
         emit(job,{'kind':'status','text':'Waking your Linux workspace…'})
-        with agent_operation(user,job): box=workspace(user)
+        with agent_operation(key,job): box=workspace(key)
         emit(job,{'kind':'status','text':'Workspace ready','sandbox':box.id})
         if hasattr(box,'computer'):
             try:
@@ -172,7 +199,7 @@ def run(job,user,body):
                 if cancelled[job].is_set(): break
                 emit(job,{'kind':'tool','name':call.name,'args':dict(call.args or {})})
                 try:
-                    with agent_operation(user,job):
+                    with agent_operation(key,job):
                         if call.name=='remember':
                             memory=str((call.args or {}).get('memory',''))[:12000]
                             with db() as c: c.execute('UPDATE agents SET memory=? WHERE user=? AND id=?',(memory,user,agent['id']))
@@ -208,14 +235,19 @@ def run(job,user,body):
             except Exception: pass
         body.api_key=''
         cancelled.pop(job,None)
-        user_lock(user).release()
+        user_lock(key).release()
+        capacity.release()
 @app.post('/tasks')
 def task(body:Task,user=Depends(current_user)):
     agent=resolve_agent(user,body.agent_id)
     body.agent_id=agent['id']
-    if user_controls(user): raise HTTPException(409,'Hand computer control back before starting a task')
-    lock=user_lock(user)
-    if not lock.acquire(False): raise HTTPException(409,'A task is already running')
+    key=scope(user,agent['id'])
+    if user_controls(key): raise HTTPException(409,'Hand computer control back before starting a task')
+    lock=user_lock(key)
+    if not lock.acquire(False): raise HTTPException(409,'This agent is already working')
+    if not capacity.acquire(False):
+        lock.release()
+        raise HTTPException(429,'Four agents are working. Try again when one finishes.')
     job=uuid.uuid4().hex
     cancelled[job]=threading.Event()
     try:
@@ -224,33 +256,33 @@ def task(body:Task,user=Depends(current_user)):
             c.execute('INSERT INTO jobs(id,user,status,events,error,agent_id,created) VALUES(?,?,?,?,?,?,?)',(job,user,'running','[]',None,agent['id'],time.time()))
         pool.submit(run,job,user,body)
     except Exception:
-        cancelled.pop(job,None); lock.release(); raise
+        cancelled.pop(job,None); lock.release(); capacity.release(); raise
     return {'id':job}
 @app.get('/tasks/{job}')
 def get_task(job:str,user=Depends(current_user)):
     with db() as c: row=c.execute('SELECT * FROM jobs WHERE id=? AND user=?',(job,user)).fetchone()
     if not row: raise HTTPException(404,'Task not found')
-    return {'id':job,'agent_id':row['agent_id'],'created':row['created'],'status':row['status'],'events':json.loads(row['events']),'error':row['error'],'control':'user' if user_controls(user) else 'agent'}
+    return {'id':job,'agent_id':row['agent_id'],'created':row['created'],'status':row['status'],'events':json.loads(row['events']),'error':row['error'],'control':'user' if user_controls(scope(user,row['agent_id'])) else 'agent'}
 @app.post('/tasks/{job}/cancel')
 def cancel(job:str,user=Depends(current_user)):
     get_task(job,user)
     if job in cancelled: cancelled[job].set()
     return {'ok':True,'note':'Stops after the current bounded command or model call.'}
 @app.get('/workspace/files')
-def files(user=Depends(current_user)):
+def files(user=Depends(workspace_scope)):
     lock=user_lock(user)
     if not lock.acquire(False): raise HTTPException(409,'Wait for the current task')
     try:
         return workspace(user).execute(python_command("import os,json; print(json.dumps([{'name':n,'directory':os.path.isdir('/workspace/'+n)} for n in os.listdir('/workspace')][:200]))"))
     finally: lock.release()
 @app.post('/workspace/stop')
-def stop(user=Depends(current_user)):
+def stop(user=Depends(workspace_scope)):
     lock=user_lock(user)
     if not lock.acquire(False): raise HTTPException(409,'Stop the active task first')
     try:
         if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'Wait for the current computer action')
         try:
-            with db() as c: row=c.execute('SELECT sandbox FROM workspaces WHERE user=?',(user,)).fetchone()
+            row=workspace_record(user)
             if row:
                 if os.getenv('SANDBOX_PROVIDER','daytona')=='daytona':
                     from sandboxes import existing_sandbox
@@ -261,13 +293,26 @@ def stop(user=Depends(current_user)):
         finally: operation_lock(user).release()
     finally: lock.release()
 
-# Agent identity and conversations are durable; all agents share the account's existing computer.
+# Each agent owns its computer, task lock and control lease.
+SHAPES=('blob','pebble','bean','egg','squircle','tablet','capsule','cylinder','hex','gem','crystal','wedge','shield','dome','arch','cloud','teardrop','leaf')
+MATERIALS=('pearl','mint','coral','ultraviolet','blue-milk','iridescent-orb')
+def with_appearance(c,agent):
+    visual=c.execute('SELECT shape,material FROM agent_appearance WHERE agent_id=?',(agent['id'],)).fetchone()
+    return {**agent,'shape':visual['shape'] if visual else SHAPES[agent['avatar']%18],'material':visual['material'] if visual else 'pearl'}
+def save_appearance(c,aid,body):
+    if body.shape is None and body.material is None:return
+    old=c.execute('SELECT shape,material FROM agent_appearance WHERE agent_id=?',(aid,)).fetchone()
+    shape=body.shape or (old['shape'] if old else SHAPES[body.avatar%18])
+    material=body.material or (old['material'] if old else 'pearl')
+    c.execute('INSERT OR REPLACE INTO agent_appearance VALUES(?,?,?)',(aid,shape,material))
 class AgentProfile(BaseModel):
     name:str=Field(min_length=1,max_length=48)
     role:str=Field(default='General assistant',max_length=80)
     instructions:str=Field(default='Complete useful work, verify results, and keep updates concise.',max_length=8000)
-    avatar:int=Field(default=0,ge=0,le=5)
+    avatar:int=Field(default=0,ge=0,le=17)
     memory:str=Field(default='',max_length=12000)
+    shape:str|None=Field(default=None,pattern='^('+ '|'.join(SHAPES) +')$')
+    material:str|None=Field(default=None,pattern='^('+ '|'.join(MATERIALS) +')$')
 class SkillBody(BaseModel):
     name:str=Field(min_length=1,max_length=80)
     instructions:str=Field(min_length=1,max_length=8000)
@@ -277,7 +322,7 @@ def resolve_agent(user,agent_id=None):
         if agent_id:
             row=c.execute('SELECT * FROM agents WHERE user=? AND id=?',(user,agent_id)).fetchone()
             if not row: raise HTTPException(404,'Agent not found')
-            return dict(row)
+            return with_appearance(c,dict(row))
         row=c.execute('SELECT * FROM agents WHERE user=? ORDER BY created LIMIT 1',(user,)).fetchone()
         if not row:
             aid=uuid.uuid4().hex
@@ -285,7 +330,7 @@ def resolve_agent(user,agent_id=None):
             row=c.execute('SELECT * FROM agents WHERE id=?',(aid,)).fetchone()
         c.execute('UPDATE messages SET agent_id=? WHERE user=? AND agent_id IS NULL',(row['id'],user))
         c.execute('UPDATE jobs SET agent_id=? WHERE user=? AND agent_id IS NULL',(row['id'],user))
-        return dict(row)
+        return with_appearance(c,dict(row))
 
 @app.get('/agents')
 def agents(user=Depends(current_user)):
@@ -293,10 +338,13 @@ def agents(user=Depends(current_user)):
     with db() as c:
         result=[]
         for r in c.execute('SELECT * FROM agents WHERE user=? ORDER BY created',(user,)):
-            agent=dict(r)
-            job=c.execute('SELECT id,status,error,created FROM jobs WHERE user=? AND agent_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(user,r['id'])).fetchone()
+            agent=with_appearance(c,dict(r))
+            job=c.execute('SELECT id,status,error,created,events FROM jobs WHERE user=? AND agent_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(user,r['id'])).fetchone()
             msg=c.execute('SELECT text,role FROM messages WHERE user=? AND agent_id=? ORDER BY id DESC LIMIT 1',(user,r['id'])).fetchone()
             agent['job']=dict(job) if job else None
+            if agent['job']:
+                agent['job']['events']=json.loads(agent['job']['events'])[-8:]
+                agent['job']['control']='user' if user_controls(scope(user,r['id'])) else 'agent'
             agent['preview']=msg['text'][:120] if msg else agent['role']
             result.append(agent)
         return result
@@ -306,11 +354,14 @@ def create_agent(body:AgentProfile,user=Depends(current_user)):
         if c.execute('SELECT COUNT(*) FROM agents WHERE user=?',(user,)).fetchone()[0]>=20: raise HTTPException(400,'You can create up to 20 agents')
         aid=uuid.uuid4().hex
         c.execute('INSERT INTO agents VALUES(?,?,?,?,?,?,?,?)',(aid,user,body.name.strip(),body.role.strip(),body.instructions,body.avatar,body.memory,time.time()))
+        save_appearance(c,aid,body)
     return resolve_agent(user,aid)
 @app.put('/agents/{aid}')
 def edit_agent(aid:str,body:AgentProfile,user=Depends(current_user)):
     resolve_agent(user,aid)
-    with db() as c: c.execute('UPDATE agents SET name=?,role=?,instructions=?,avatar=?,memory=? WHERE user=? AND id=?',(body.name.strip(),body.role.strip(),body.instructions,body.avatar,body.memory,user,aid))
+    with db() as c:
+        c.execute('UPDATE agents SET name=?,role=?,instructions=?,avatar=?,memory=? WHERE user=? AND id=?',(body.name.strip(),body.role.strip(),body.instructions,body.avatar,body.memory,user,aid))
+        save_appearance(c,aid,body)
     return resolve_agent(user,aid)
 @app.get('/agents/{aid}/skills')
 def skills(aid:str,user=Depends(current_user)):
@@ -337,10 +388,10 @@ def test_provider(body:ProviderKey,user=Depends(current_user)):
         client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=15000))
         models=[{'id':m.name.replace('models/',''),'name':m.display_name or m.name.replace('models/','')} for m in client.models.list() if 'generateContent' in (m.supported_actions or []) and m.name and 'gemini' in m.name]
         checked=None
-        if body.model:
-            checked=body.model if any(m['id']==body.model for m in models) else (models[0]['id'] if models else None)
-            if not checked: raise HTTPException(400,'No Gemini text models are available to this key.')
-            client.models.generate_content(model=checked,contents='Reply OK. Do not use tools.',config=types.GenerateContentConfig(tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=16))
+        preferred=sorted(models,key=lambda m:('flash' not in m['id'],'preview' in m['id'],'lite' in m['id'],m['id']))
+        checked=body.model if body.model and any(m['id']==body.model for m in models) else (preferred[0]['id'] if preferred else None)
+        if not checked: raise HTTPException(400,'No Gemini text models are available to this key.')
+        client.models.generate_content(model=checked,contents='Reply OK. Do not use tools.',config=types.GenerateContentConfig(tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=16))
         return {'ok':True,'models':models,'model_checked':checked}
     except HTTPException: raise
     except Exception as exc: raise HTTPException(400,task_error(exc,'model'))
@@ -351,8 +402,8 @@ def test_provider(body:ProviderKey,user=Depends(current_user)):
         body.api_key=''
 
 @app.get('/workspace/status')
-def computer_status(user=Depends(current_user)):
-    with db() as c: row=c.execute('SELECT sandbox FROM workspaces WHERE user=?',(user,)).fetchone()
+def computer_status(user=Depends(workspace_scope)):
+    row=workspace_record(user)
     if not row: return {'state':'not_created','control':'agent'}
     try:
         from sandboxes import sandbox_state
@@ -365,9 +416,9 @@ def computer_box(user):
     if not hasattr(box,'computer'): raise HTTPException(501,'Desktop access is not available with this sandbox provider')
     return box
 @app.post('/workspace/start')
-def start_computer(user=Depends(current_user)):
+def start_computer(user=Depends(workspace_scope)):
     # Viewing an already running sandbox must not wait for a 60-second AI shell command.
-    with db() as c: row=c.execute('SELECT sandbox FROM workspaces WHERE user=?',(user,)).fetchone()
+    row=workspace_record(user)
     if row and os.getenv('SANDBOX_PROVIDER','daytona')=='daytona':
         try:
             from sandboxes import existing_sandbox
@@ -385,9 +436,9 @@ def start_computer(user=Depends(current_user)):
     except Exception: raise HTTPException(503,'Could not start the desktop. This Daytona snapshot must include the desktop stack.')
     finally: operation_lock(user).release()
 @app.get('/workspace/screen')
-def screen(user=Depends(current_user)):
+def screen(user=Depends(workspace_scope)):
     try:
-        with db() as c: row=c.execute('SELECT sandbox FROM workspaces WHERE user=?',(user,)).fetchone()
+        row=workspace_record(user)
         if not row: raise HTTPException(409,'Start the computer first')
         from sandboxes import existing_sandbox
         from sandboxes import capture_screen
@@ -398,7 +449,7 @@ def screen(user=Depends(current_user)):
     except Exception: raise HTTPException(503,'Screen unavailable. Start the desktop or reconnect.')
 class Control(BaseModel): owner:str=Field(pattern='^(user|agent)$')
 @app.post('/workspace/control')
-def control(body:Control,user=Depends(current_user)):
+def control(body:Control,user=Depends(workspace_scope)):
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'The current computer action is finishing. Try again shortly.')
     try:
         control_until[user]=time.time()+45 if body.owner=='user' else 0
@@ -411,7 +462,7 @@ class Input(BaseModel):
     text:str=Field(default='',max_length=4000)
     direction:str=Field(default='down',pattern='^(up|down)$')
 @app.post('/workspace/input')
-def computer_input(body:Input,user=Depends(current_user)):
+def computer_input(body:Input,user=Depends(workspace_scope)):
     with operation_lock(user):
         if not user_controls(user): raise HTTPException(409,'Take control of the computer first')
         cu=computer_box(user).computer()
@@ -427,7 +478,7 @@ def computer_input(body:Input,user=Depends(current_user)):
         except Exception: raise HTTPException(503,'Could not send input to the computer')
 class Command(BaseModel): command:str=Field(min_length=1,max_length=8000)
 @app.post('/workspace/terminal')
-def terminal(body:Command,user=Depends(current_user)):
+def terminal(body:Command,user=Depends(workspace_scope)):
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'Computer is busy')
     try:
         if not user_controls(user): raise HTTPException(409,'Take control before running a command')
@@ -446,7 +497,7 @@ def checked_path(box,path):
     if result['exit_code']!=0: raise HTTPException(400,'Path must remain inside the workspace')
     return result['output'].strip()
 @app.get('/workspace/list')
-def list_files(path:str='',user=Depends(current_user)):
+def list_files(path:str='',user=Depends(workspace_scope)):
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'Computer is busy')
     try:
         box=workspace(user); full=checked_path(box,path)
@@ -455,7 +506,7 @@ def list_files(path:str='',user=Depends(current_user)):
         return json.loads(r['output'])
     finally: operation_lock(user).release()
 @app.get('/workspace/file')
-def read_download(path:str,user=Depends(current_user)):
+def read_download(path:str,user=Depends(workspace_scope)):
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'Computer is busy')
     try:
         box=workspace(user); full=checked_path(box,path)
@@ -469,7 +520,7 @@ class Upload(BaseModel):
     name:str=Field(min_length=1,max_length=180,pattern=r'^[^/\\\x00]+$')
     data:str=Field(max_length=5600000)
 @app.post('/workspace/upload')
-def upload(body:Upload,user=Depends(current_user)):
+def upload(body:Upload,user=Depends(workspace_scope)):
     try: data=base64.b64decode(body.data,validate=True)
     except Exception: raise HTTPException(400,'Invalid file data')
     if len(data)>4*1024*1024: raise HTTPException(413,'Uploads are limited to 4 MB')

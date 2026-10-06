@@ -1,320 +1,35 @@
-import React, { useRef, useState } from "react";
-import {
-  Animated,
-  View,
-  Text,
-  Pressable,
-  TextInput,
-  ScrollView,
-  ActivityIndicator,
-  useWindowDimensions,
-} from "react-native";
-import AgentFace, { MotionContext } from "./AgentFace";
-
-export default function Onboarding({
-  api,
-  initialKey,
-  initialModel,
-  onComplete,
-}: {
-  api: (path: string, method?: string, body?: any) => Promise<any>;
-  initialKey: string;
-  initialModel: string;
-  onComplete: (key: string, model: string) => Promise<void>;
-}) {
-  const [step, setStep] = useState(0),
-    [key, setKey] = useState(initialKey),
-    [model, setModel] = useState(initialModel),
-    [models, setModels] = useState<{ id: string; name: string }[]>([]),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [verified, setVerified] = useState(false);
-  const motion = React.useContext(MotionContext);
-  const slide = useRef(new Animated.Value(0)).current;
-  const { width } = useWindowDimensions();
-  const go = (next: number) => {
-    if (!motion) {
-      setStep(next);
-      return;
-    }
-    Animated.timing(slide, {
-      toValue: next > step ? -width * 0.15 : width * 0.15,
-      duration: 130,
-      useNativeDriver: true,
-    }).start(() => {
-      setStep(next);
-      slide.setValue(next > step ? width * 0.35 : -width * 0.35);
-      Animated.spring(slide, {
-        toValue: 0,
-        speed: 17,
-        bounciness: 0,
-        useNativeDriver: true,
-      }).start();
-    });
-  };
-  const check = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const r = await api("/provider/test", "POST", {
-        api_key: key.trim(),
-        model,
-      });
-      setModels(r.models);
-      setVerified(true);
-      setModel(r.model_checked || model);
-    } catch (e: any) {
-      setError(e.message);
-      setVerified(false);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const finish = async () => {
-    setBusy(true);
-    try {
-      await onComplete(key.trim(), model);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <View style={{ flex: 1, backgroundColor: "#111315" }}>
-      <View style={{ flexDirection: "row", alignItems: "center", padding: 24 }}>
-        <Text
-          style={{ color: "#ECEFF1", fontSize: 19, fontWeight: "600", flex: 1 }}
-        >
-          aetherVM
-        </Text>
-        <Pressable onPress={finish} disabled={busy}>
-          <Text style={{ color: "#949CA4", fontSize: 13 }}>Set up later</Text>
-        </Pressable>
-      </View>
-      <Animated.View style={{ flex: 1, transform: [{ translateX: slide }] }}>
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{
-            flexGrow: 1,
-            padding: 28,
-            maxWidth: 500,
-            width: "100%",
-            alignSelf: "center",
-          }}
-        >
-          <View
-            style={{
-              alignItems: "center",
-              paddingTop: step === 1 ? 18 : 48,
-              paddingBottom: 32,
-            }}
-          >
-            <AgentFace
-              variant={step}
-              size={step === 1 ? 82 : 145}
-              mood={step === 2 ? "success" : "idle"}
-            />
-          </View>
-          <Text
-            style={{
-              color: "#ECEFF1",
-              fontSize: 32,
-              lineHeight: 38,
-              fontWeight: "600",
-              letterSpacing: -1,
-              marginBottom: 14,
-            }}
-          >
-            {
-              [
-                "Meet your new\ncomputer companion.",
-                "Bring your Gemini.",
-                "Watch. Help.\nHand it back.",
-              ][step]
-            }
-          </Text>
-          <Text
-            style={{
-              color: "#949CA4",
-              fontSize: 16,
-              lineHeight: 25,
-              marginBottom: 28,
-            }}
-          >
-            {
-              [
-                "Give an agent a task. It can browse, install tools and work with files on its own Linux computer.",
-                "Your key stays securely on this phone. Choose a model you have access to; Gemini and Daytona usage follow your provider quotas.",
-                "Tap the computer icon to watch while your agent works. Take control when it needs a login, then hand control back and tell it to continue.",
-              ][step]
-            }
-          </Text>
-          {step === 1 && (
-            <>
-              <TextInput
-                accessibilityLabel="Gemini API key"
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={key}
-                onChangeText={(v) => {
-                  setKey(v);
-                  setVerified(false);
-                }}
-                placeholder="Paste your Gemini API key"
-                placeholderTextColor="#69737D"
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#2A2E32",
-                  borderRadius: 16,
-                  color: "#ECEFF1",
-                  padding: 18,
-                  fontSize: 15,
-                }}
-              />
-              <Pressable
-                disabled={busy || key.trim().length < 10}
-                onPress={check}
-                style={{ paddingVertical: 18, flexDirection: "row", gap: 10 }}
-              >
-                {busy && <ActivityIndicator size="small" color="#B7C6FA" />}
-                <Text style={{ color: verified ? "#8FC8A5" : "#B7C6FA" }}>
-                  {verified ? "Connected ✓" : "Test connection"}
-                </Text>
-              </Pressable>
-              {!!models.length && (
-                <View style={{ marginBottom: 20 }}>
-                  <Text
-                    style={{ color: "#949CA4", fontSize: 12, marginBottom: 10 }}
-                  >
-                    YOUR MODEL
-                  </Text>
-                  {models.slice(0, 8).map((m) => (
-                    <Pressable
-                      key={m.id}
-                      onPress={() => setModel(m.id)}
-                      style={{
-                        padding: 13,
-                        borderRadius: 12,
-                        marginBottom: 5,
-                        backgroundColor: model === m.id ? "#252D40" : "#1B1E21",
-                      }}
-                    >
-                      <Text style={{ color: "#ECEFF1", fontSize: 14 }}>
-                        {m.name}
-                        {model === m.id ? "  ✓" : ""}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              )}
-            </>
-          )}
-          {step === 2 && (
-            <View style={{ gap: 18 }}>
-              {[
-                ["1", "Tell it what you need"],
-                ["2", "Watch the computer live"],
-                ["3", "Review the result"],
-              ].map(([n, t]) => (
-                <View
-                  key={n}
-                  style={{
-                    flexDirection: "row",
-                    gap: 15,
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ color: "#B7C6FA", fontSize: 15 }}>
-                    {n.padStart(2, "0")}
-                  </Text>
-                  <Text style={{ color: "#ECEFF1", fontSize: 15 }}>{t}</Text>
-                </View>
-              ))}
-              <Text
-                style={{
-                  color: "#69737D",
-                  fontSize: 12,
-                  lineHeight: 19,
-                  marginTop: 12,
-                }}
-              >
-                Agents share your account’s computer. Purchases, messages and
-                destructive actions need your approval. A task can use shell
-                commands without changing the visible desktop.
-              </Text>
-            </View>
-          )}
-          {!!error && (
-            <Text
-              style={{
-                color: "#E7A29E",
-                fontSize: 13,
-                lineHeight: 20,
-                marginTop: 15,
-              }}
-            >
-              {error}
-            </Text>
-          )}
-        </ScrollView>
-      </Animated.View>
-      <View
-        style={{
-          padding: 24,
-          maxWidth: 500,
-          width: "100%",
-          alignSelf: "center",
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            gap: 7,
-            justifyContent: "center",
-            marginBottom: 24,
-          }}
-        >
-          {[0, 1, 2].map((i) => (
-            <View
-              key={i}
-              style={{
-                width: i === step ? 24 : 6,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: i === step ? "#ECEFF1" : "#393F45",
-              }}
-            />
-          ))}
-        </View>
-        <Pressable
-          disabled={busy}
-          onPress={() => (step < 2 ? go(step + 1) : finish())}
-          style={{
-            backgroundColor: "#ECEFF1",
-            padding: 18,
-            borderRadius: 30,
-            alignItems: "center",
-          }}
-        >
-          <Text style={{ color: "#111315", fontSize: 16, fontWeight: "600" }}>
-            {step === 2
-              ? "Open my workspace"
-              : step === 1 && !verified
-                ? "Continue without testing"
-                : "Continue"}
-          </Text>
-        </Pressable>
-        {step > 0 && (
-          <Pressable
-            onPress={() => go(step - 1)}
-            style={{ paddingTop: 15, alignItems: "center" }}
-          >
-            <Text style={{ color: "#949CA4", fontSize: 13 }}>Back</Text>
-          </Pressable>
-        )}
-      </View>
-    </View>
-  );
+import React,{useContext,useEffect,useRef,useState} from 'react';
+import {View,Text,TextInput,Pressable,ScrollView,ActivityIndicator,Linking,KeyboardAvoidingView,Platform,StyleSheet} from 'react-native';
+import AetherCharacter from './character/AetherCharacter';
+import AppearancePicker from './character/AppearancePicker';
+import {CharacterState} from './character/appearance';
+import SlideSurface from './SlideSurface';
+import {MotionContext} from './MotionContext';
+export default function Onboarding({api,initialKey,initialModel,onComplete}:{api:(path:string,method?:string,body?:any)=>Promise<any>;initialKey:string;initialModel:string;onComplete:(key:string,model:string,agent?:any)=>Promise<void>}) {
+ const [step,setStep]=useState(0),[key,setKey]=useState(initialKey),[model,setModel]=useState(initialModel),[busy,setBusy]=useState(false),[error,setError]=useState(''),[verified,setVerified]=useState(false),[showKey,setShowKey]=useState(false),[models,setModels]=useState<{id:string;name:string}[]>([]),[advanced,setAdvanced]=useState(false),[demo,setDemo]=useState(0),[reaction,setReaction]=useState<CharacterState>('spawning');
+ const [agent,setAgent]=useState({name:'Atlas',role:'General',shape:'blob',material:'pearl',avatar:0,instructions:'Complete useful work, verify results and keep updates concise.',memory:''});
+ const motion=useContext(MotionContext),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ useEffect(()=>()=>{if(timer.current)clearTimeout(timer.current)},[]);
+ useEffect(()=>{if(step!==1)return;setDemo(0);if(!motion){setDemo(4);return;}const t=setInterval(()=>setDemo(n=>n<4?n+1:4),1350);return()=>clearInterval(t)},[step,motion]);
+ useEffect(()=>{setError('');if(step===0){setReaction('spawning');const t=setTimeout(()=>setReaction('idle'),1600);return()=>clearTimeout(t)}setReaction(step===4?'happy':step===3?'curious':'idle')},[step]);
+ const go=(n:number)=>{if(busy)return;if(motion){setReaction('playful');timer.current=setTimeout(()=>setStep(n),220)}else setStep(n)};
+ const connect=async()=>{setBusy(true);setError('');setReaction('sending');try{const r=await api('/provider/test','POST',{api_key:key.trim(),model});setModels(r.models||[]);setModel(r.model_checked||model);setVerified(true);setReaction('happy');timer.current=setTimeout(()=>setStep(3),850)}catch(e:any){setError(e.message);setVerified(false);setReaction('confused')}finally{setBusy(false)}};
+ const finish=async()=>{setBusy(true);setError('');try{await onComplete(verified?key.trim():initialKey,model,agent)}catch(e:any){setError(e.message);setReaction('confused')}finally{setBusy(false)}};
+ const demoLines=['Opening browser…','Searching the web…','Reading sources…','Creating report.pdf…','Done ✓'];
+ const characterState:CharacterState=step===1?demo<2?'searching':demo<4?'writing':'happy':reaction;
+ return <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={{flex:1,backgroundColor:'#111315'}}>
+  <View style={s.header}><Text style={s.brand}>AetherVM</Text><Text style={s.small}>{String(step+1).padStart(2,'0')} / 05</Text></View>
+  <SlideSurface key={step} style={{flex:1}}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
+   <View style={{alignItems:'center',paddingTop:step===1?8:20,paddingBottom:22}}><AetherCharacter shape={agent.shape} material={agent.material} size={step===1?110:step===3?180:200} state={characterState} interactive/></View>
+   <Text style={s.title}>{['Your AI just got\na computer.','It works while you\ndo something else.','Bring your\nintelligence.','Make it yours.',`${agent.name.trim()||'Your Aether'} is ready.`][step]}</Text>
+   <Text style={s.description}>{['Give it a task. It can browse, code, use files and work inside its own Linux computer.','Watch whenever you want. Take control when it needs you.','Connect Google Gemini with your own API key.','A little digital worker. With a character of its own.','Give it something worth doing.'][step]}</Text>
+   {step===1&&<View style={s.demo}><View style={{flexDirection:'row',gap:5,marginBottom:20}}>{[0,1,2].map(i=><View key={i} style={{width:6,height:6,borderRadius:3,backgroundColor:'#69737D'}}/> )}<Text style={[s.small,{marginLeft:8}]}>Example session</Text></View>{demoLines.map((line,i)=><View key={line} style={{flexDirection:'row',gap:12,paddingVertical:9,opacity:i<=demo?1:.25}}><Text style={{color:i<demo||demo===4?'#8FC8A5':'#949CA4'}}>{i<demo||demo===4?'✓':'○'}</Text><Text style={{color:'#ECEFF1',fontSize:14}}>{line}</Text></View>)}</View>}
+   {step===2&&<><Text style={s.provider}>Google Gemini</Text><View style={s.keyRow}><TextInput value={key} onChangeText={v=>{setKey(v);setVerified(false)}} accessibilityLabel="Gemini API key" placeholder="Paste your API key" secureTextEntry={!showKey} autoCapitalize="none" autoCorrect={false} placeholderTextColor="#69737D" style={[s.input,{flex:1}]}/><Pressable accessibilityLabel={showKey?'Hide API key':'Show API key'} onPress={()=>setShowKey(!showKey)} style={{padding:14}}><Text style={s.small}>{showKey?'Hide':'Show'}</Text></Pressable></View><Text style={[s.small,{marginTop:12}]}>Stored securely on this device.</Text><Pressable onPress={()=>Linking.openURL('https://aistudio.google.com/apikey')} style={{paddingVertical:18}}><Text style={s.link}>Don't have a key? Get one ↗</Text></Pressable>{models.length>0&&<Pressable onPress={()=>setAdvanced(!advanced)} style={{paddingVertical:12}}><Text style={s.small}>Change model {advanced?'↑':'↓'}</Text></Pressable>}{advanced&&models.map(m=><Pressable key={m.id} onPress={()=>setModel(m.id)} style={{padding:12}}><Text style={{color:model===m.id?'#ECEFF1':'#949CA4'}}>{m.name}</Text></Pressable>)}</>}
+   {step===3&&<><AppearancePicker value={agent} onChange={v=>setAgent({...agent,...v})}/><TextInput accessibilityLabel="Aether name" value={agent.name} onChangeText={name=>setAgent({...agent,name})} placeholder="Name your Aether" maxLength={48} placeholderTextColor="#69737D" style={[s.input,{backgroundColor:'#1B1E21',borderRadius:16,fontSize:22,textAlign:'center',marginBottom:20}]} autoCapitalize="words"/><View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>{['General','Researcher','Developer','Creative'].map(role=><Pressable key={role} onPress={()=>{setAgent({...agent,role,instructions:role==='Researcher'?'Research using the visible browser, verify primary sources and summarize clearly.':role==='Developer'?'Build software, test changes and verify results.':role==='Creative'?'Create useful, thoughtful work and verify the finished result.':'Complete useful work, verify results and keep updates concise.'});setReaction(role==='Researcher'?'curious':role==='Developer'?'thinking':'playful')}} style={{backgroundColor:agent.role===role?'#222629':'transparent',paddingVertical:12,paddingHorizontal:15,borderRadius:20}}><Text style={{color:agent.role===role?'#ECEFF1':'#949CA4',fontSize:13}}>{role}</Text></Pressable>)}</View></>}
+   {step===4&&<View style={{gap:16,marginTop:10}}>{['Research something for me','Build a small project','Work with my files'].map(t=><Text key={t} style={{color:'#C5CBD0',fontSize:15}}>↗  {t}</Text>)}</View>}
+   {!!error&&<Text accessibilityRole="alert" style={{color:'#E7A29E',fontSize:13,lineHeight:21,marginTop:18}}>{error}</Text>}
+  </ScrollView></SlideSurface>
+  <View style={s.footer}><Pressable accessibilityRole="button" disabled={busy||(step===3&&!agent.name.trim())||(step===2&&key.trim().length<10)} onPress={()=>step===4?finish():step===2?connect():go(step+1)} style={[s.cta,{opacity:busy?.5:1}]}>{busy?<ActivityIndicator color="#111315"/>:<Text style={s.ctaText}>{['Get started','Continue','Connect →','Meet your Aether','Enter AetherVM'][step]}</Text>}</Pressable><View style={{flexDirection:'row',justifyContent:'space-between',paddingTop:16,minHeight:40}}>{step>0?<Pressable onPress={()=>go(step-1)} disabled={busy}><Text style={s.small}>Back</Text></Pressable>:<View/>}{step===2&&<Pressable onPress={()=>{setKey(initialKey);setVerified(false);go(3)}} disabled={busy}><Text style={s.small}>Set up later</Text></Pressable>}</View></View>
+ </KeyboardAvoidingView>;
 }
+const s=StyleSheet.create({header:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',padding:24},brand:{color:'#ECEFF1',fontSize:18,fontWeight:'600'},small:{color:'#949CA4',fontSize:12,lineHeight:20},content:{paddingHorizontal:28,paddingBottom:24,maxWidth:540,width:'100%',alignSelf:'center',flexGrow:1},title:{color:'#ECEFF1',fontSize:34,lineHeight:40,fontWeight:'600',letterSpacing:-1.1,marginBottom:14},description:{color:'#949CA4',fontSize:15,lineHeight:24,marginBottom:26},demo:{backgroundColor:'#1B1E21',borderRadius:20,padding:20},provider:{color:'#ECEFF1',fontSize:18,fontWeight:'500',marginBottom:14},keyRow:{flexDirection:'row',alignItems:'center',backgroundColor:'#1B1E21',borderRadius:16},input:{padding:16,minHeight:56,color:'#ECEFF1',fontSize:15},link:{color:'#B7C6FA',fontSize:13},footer:{paddingHorizontal:24,paddingTop:12,paddingBottom:8,maxWidth:540,width:'100%',alignSelf:'center'},cta:{backgroundColor:'#ECEFF1',borderRadius:28,alignItems:'center',justifyContent:'center',minHeight:54},ctaText:{color:'#111315',fontSize:15,fontWeight:'600'}});

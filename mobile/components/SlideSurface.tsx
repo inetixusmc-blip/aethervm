@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useRef } from "react";
 import { Animated, useWindowDimensions } from "react-native";
-import { MotionContext } from "./AgentFace";
+import { MotionContext } from "./MotionContext";
 export default function SlideSurface({
   children,
   from = "right",

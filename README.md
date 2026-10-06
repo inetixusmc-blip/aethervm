@@ -4,9 +4,19 @@ Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gem
 
 ## Status
 
-The 0.3.0 Android preview adds expressive animated faces, a three-step onboarding flow, sliding navigation, simpler agent creation, automatic live-screen connection and clearer Gemini failures. It uses persistent agent profiles, separate conversations, a dedicated computer surface, files, terminal, skills and secure Gemini configuration. The personal backend is deployed at `https://aethervm-api.onrender.com` on Render Free with Turso persistence. GitHub Actions builds the ARM64 preview APK; download `AetherVM-preview-apk` from the latest successful run for the mobile changes, extract it and install `app-release.apk` over the existing preview.
+The 0.4.0 preview introduces Home / Agents / Activity / Settings navigation,
+five-step onboarding, an inline computer preview and the original offline
+`grokbot-animation` SVG runtime. Shape and material are persisted independently
+of live task state. Each agent now owns an isolated computer, task lock and
+manual-control lease, with at most four simultaneous workers. The oldest agent
+inherits the previous account computer so its files remain accessible.
 
-This remains a personal preview. Profiles share the account's existing Daytona computer. Scheduled automation and parallel agents are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
+The existing endpoint remains `https://aethervm-api.onrender.com`. AWS migration
+is prepared under `deploy/aws/` but could not be performed because SSH from the
+build environment is unreachable. Do not switch the app to EC2 until valid HTTPS
+and the live critical flows have been verified.
+
+This remains a personal preview. Agents own separate Daytona computers. Scheduled automation and parallel agents are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
 
 ## 1. Configure Google login
 
@@ -31,7 +41,7 @@ Use one API process: the task executor and cancellation flags are process-local.
 
 ### Daytona (default)
 
-Create an account at https://app.daytona.io and generate an API key. Set `DAYTONA_API_KEY`, `DAYTONA_API_URL=https://app.daytona.io/api`, `SANDBOX_PROVIDER=daytona` in backend `.env`. Each account receives its own sandbox, with a 5-minute idle auto-stop. Stopped sandbox disk may still incur charges. Use the app's Put computer to sleep button to stop compute after a task. The standard Daytona image includes the desktop dependencies. Custom `DAYTONA_SNAPSHOT` images must provide those dependencies. The separate headless browse tool may require Playwright and Chromium installation. Provider snapshot permissions determine whether system packages can be installed.
+Create an account at https://app.daytona.io and generate an API key. Set `DAYTONA_API_KEY`, `DAYTONA_API_URL=https://app.daytona.io/api`, `SANDBOX_PROVIDER=daytona` in backend `.env`. Each agent receives its own sandbox, with a 5-minute idle auto-stop. Stopped sandbox disk may still incur charges. Use the app's Put computer to sleep button to stop compute after a task. The standard Daytona image includes the desktop dependencies. Custom `DAYTONA_SNAPSHOT` images must provide those dependencies. The separate headless browse tool may require Playwright and Chromium installation. Provider snapshot permissions determine whether system packages can be installed.
 
 Daytona manages independent sandboxes; this app does not claim that Daytona splits a single rented VM into unlimited free workspaces.
 
@@ -44,7 +54,7 @@ cd backend
 docker build -f Dockerfile.sandbox -t aethervm-sandbox:local .
 ```
 
-Set `SANDBOX_PROVIDER=docker` in `.env`, then run the API on the Docker host. Each Google account gets a separate container and persistent named volume, using up to 1 CPU and 1 GiB RAM. The image includes Chromium/Playwright, Python, Node, npm, curl and git. Containers can install packages; they cannot access the Docker socket or mounted host directories. The API needs Docker access; never grant it to the agent container. Manually stop unused containers or use the app's stop control. Files survive container stops.
+Set `SANDBOX_PROVIDER=docker` in `.env`, then run the API on the Docker host. Each agent gets a separate container and persistent named volume, using up to 1 CPU and 1 GiB RAM. The image includes Chromium/Playwright, Python, Node, npm, curl and git. Containers can install packages; they cannot access the Docker socket or mounted host directories. The API needs Docker access; never grant it to the agent container. Manually stop unused containers or use the app's stop control. Files survive container stops.
 
 For a personal prototype, Docker shares one machine economically. Ordinary containers share the host kernel and are not a strong boundary for arbitrary hostile public tenants. Before offering public access, use hardened isolation, network policy blocking private/metadata destinations, tenant quotas, rate limiting and a proper queued job service. This version is intended for trusted personal use.
 
@@ -71,8 +81,8 @@ EAS needs your Expo account and available build quota. When Google Android OAuth
 
 ## App features
 
-- Restrained dark interface with a persistent agent roster, focused conversation and dedicated Computer surface on mobile. Wider screens show a fixed roster and optional computer panel.
-- Create and edit named agents with roles, instructions, avatars and persistent memory. Each agent has separate conversations and task history; the account shares one computer.
+- Restrained dark interface with a persistent agent roster, focused conversation and dedicated Computer surface on mobile. Wider screens can expand the computer beside the conversation.
+- Create and edit named agents with roles, instructions, avatars and persistent memory. Each agent has separate conversations and task history; each agent owns its computer.
 - Google identity verified on the server; ownership checked on every private endpoint.
 - Markdown responses, copyable code, concise activity cards, expandable technical details, and explicit waiting/error/cancelled states.
 - Daytona desktop screenshots, visible browser launch, mouse/keyboard actions, and exclusive manual/agent control. A disconnected manual-control lease expires automatically.
@@ -113,4 +123,4 @@ Do not enable `DEV_AUTH=true` on an accessible server. It is a local test-only a
 
 See `DEPLOYMENT.md` for the selected Render Free + Turso Free libSQL route. `render.yaml` defines the service. The API supports `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` for durable remote storage on ephemeral hosts, and `ALLOWED_GOOGLE_EMAILS` restricts the personal deployment. Current examples contain the configured public Google Web client ID; no private provider credentials are shipped.
 
-The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.3.0. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.
+The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.4.0. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.

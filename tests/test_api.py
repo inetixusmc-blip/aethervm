@@ -101,9 +101,9 @@ def test_control_blocks_agent_and_manual_input(monkeypatch):
     assert client.post('/workspace/control',headers=h,json={'owner':'user'}).status_code==200
     assert client.post('/tasks',headers=h,json={'prompt':'Hello','api_key':'not-a-real-key'}).status_code==409
     assert client.post('/workspace/control',headers=h,json={'owner':'agent'}).status_code==200
-    main.operation_lock('local-dev').acquire()
+    main.operation_lock(main.scope('local-dev')).acquire()
     try: assert client.post('/workspace/control',headers=h,json={'owner':'user'}).status_code==409
-    finally: main.operation_lock('local-dev').release()
+    finally: main.operation_lock(main.scope('local-dev')).release()
 
 def test_read_only_status_never_provisions(monkeypatch):
     h=token()
@@ -178,11 +178,11 @@ def test_watch_running_computer_does_not_wait_for_agent_command(monkeypatch):
     starts=[]
     box=SimpleNamespace(box=SimpleNamespace(state='started'),computer=lambda:SimpleNamespace(start=lambda:starts.append(True)))
     monkeypatch.setattr(sandboxes,'existing_sandbox',lambda sid:box)
-    h=token(); main.operation_lock('local-dev').acquire()
+    h=token(); main.operation_lock(main.scope('local-dev')).acquire()
     try:
         r=client.post('/workspace/start',headers=h)
         assert r.status_code==200 and r.json()['control']=='agent'
-    finally:main.operation_lock('local-dev').release()
+    finally:main.operation_lock(main.scope('local-dev')).release()
     assert starts==[True]
 
 def test_desktop_starts_once_per_task_box():
@@ -223,3 +223,62 @@ def test_image_tool_response_preserves_signature_and_orders_response_first(monke
         if result['status']!='running':break
         time.sleep(.01)
     assert result['status']=='done'
+
+def test_appearance_roundtrip_and_legacy_update():
+    h=token()
+    with main.db() as c:c.execute("DELETE FROM agents WHERE user='local-dev'")
+    for shape in main.SHAPES:
+        r=client.post('/agents',headers=h,json={'name':shape,'shape':shape,'material':'blue-milk'})
+        assert r.status_code==200
+        a=r.json()
+        assert a['shape']==shape and a['material']=='blue-milk'
+        edit=client.put('/agents/'+a['id'],headers=h,json={'name':'Renamed','avatar':2}).json()
+        assert edit['shape']==shape and edit['material']=='blue-milk'
+    assert client.post('/agents',headers=h,json={'name':'Bad','shape':'circle'}).status_code==422
+    assert client.post('/agents',headers=h,json={'name':'Bad','material':'custom-secret'}).status_code==422
+
+def test_four_workers_isolated_and_api_responsive(monkeypatch):
+    import time,threading
+    from google.genai import types
+    with main.db() as c:c.execute("DELETE FROM agents WHERE user='local-dev'")
+    h=token()
+    agents=[client.post('/agents',headers=h,json={'name':'Worker '+str(i),'shape':main.SHAPES[i]}).json() for i in range(5)]
+    all_entered=threading.Event();release=threading.Event();seen=[];guard=threading.Lock()
+    class Box:
+        def __init__(self,key):self.id=key
+    def workspace(key):
+        with guard:
+            seen.append(key)
+            if len(seen)==4:all_entered.set()
+        assert release.wait(5)
+        if key.endswith(agents[0]['id']):raise RuntimeError('isolated failure')
+        return Box(key)
+    class Models:
+        def generate_content(self,**kw):return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role='model',parts=[types.Part(text='Verified done.')]))])
+    class Client:
+        def __init__(self,**kw):self.models=Models()
+        def close(self):pass
+    monkeypatch.setattr(main,'workspace',workspace);monkeypatch.setattr(main.genai,'Client',Client)
+    jobs=[]
+    try:
+        for a in agents[:4]:
+            r=client.post('/tasks',headers=h,json={'agent_id':a['id'],'prompt':'Do work','api_key':'test-only-key'})
+            assert r.status_code==200;jobs.append(r.json()['id'])
+        assert all_entered.wait(2), 'All four must execute concurrently'
+        start=time.monotonic();assert client.get('/health').status_code==200
+        assert client.get('/agents',headers=h).status_code==200
+        assert time.monotonic()-start<1
+        assert len(set(seen))==4
+        assert client.post('/tasks',headers=h,json={'agent_id':agents[4]['id'],'prompt':'Fifth','api_key':'test-only-key'}).status_code==429
+        assert client.post('/tasks',headers=h,json={'agent_id':agents[1]['id'],'prompt':'Duplicate','api_key':'test-only-key'}).status_code==409
+    finally:release.set()
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline:
+        results=[client.get('/tasks/'+j,headers=h).json() for j in jobs]
+        if all(r['status']!='running' for r in results):break
+        time.sleep(.01)
+    assert [r['status'] for r in results]==['error','done','done','done']
+    keys=[main.scope('local-dev',a['id']) for a in agents]
+    assert client.post('/workspace/control?agent_id='+agents[0]['id'],headers=h,json={'owner':'user'}).status_code==200
+    assert main.user_controls(keys[0]) and not main.user_controls(keys[1])
+    client.post('/workspace/control?agent_id='+agents[0]['id'],headers=h,json={'owner':'agent'})
