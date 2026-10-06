@@ -272,6 +272,8 @@ export default memo(function AgentFace({
           style={{
             position: "absolute",
             left: 19,
+            width: 27,
+            height: 14,
             top: eyesY,
             flexDirection: "row",
             gap: 12,
@@ -283,6 +285,7 @@ export default memo(function AgentFace({
               key={i}
               style={{
                 width: 7.5,
+                flexShrink: 0,
                 height: mood === "working" ? 11 : 13,
                 borderRadius: 5,
                 backgroundColor: ink,
