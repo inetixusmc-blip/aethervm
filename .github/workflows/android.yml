@@ -62,3 +62,25 @@ jobs:
         with:
           name: AetherVM-preview-apk
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
+
+  ubuntu-desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Ubuntu desktop image
+        run: |
+          docker build --progress=plain -f backend/Dockerfile.ubuntu -t aethervm-ubuntu-check backend
+          docker run --name aethervm-desktop-check -d aethervm-ubuntu-check
+          docker exec aethervm-desktop-check bash -lc '. /etc/os-release; test "$ID:$VERSION_ID" = "ubuntu:24.04"; command -v Xvfb; command -v xfce4-session; command -v x11vnc; command -v google-chrome'
+          docker exec aethervm-desktop-check bash -lc 'Xvfb :0 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &'
+          docker exec aethervm-desktop-check bash -lc 'dbus-run-session -- xfce4-session >/tmp/xfce.log 2>&1 &'
+          docker cp backend/desktop_theme.py aethervm-desktop-check:/tmp/desktop_theme.py
+          sleep 5
+          docker exec aethervm-desktop-check python3 /tmp/desktop_theme.py
+          docker cp backend/desktop_smoke.py aethervm-desktop-check:/tmp/desktop_smoke.py
+          docker exec aethervm-desktop-check python3 /tmp/desktop_smoke.py
+          docker cp aethervm-desktop-check:/workspace/ubuntu-desktop.png ubuntu-desktop.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AetherVM-Ubuntu-desktop
+          path: ubuntu-desktop.png
