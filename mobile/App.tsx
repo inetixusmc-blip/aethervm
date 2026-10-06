@@ -1363,7 +1363,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           >
 
             <View style={s.main}>
-              {['home','agents','activity','settings'].includes(screen) ? <View style={[s.header,{borderBottomWidth:0,paddingHorizontal:24}]}><Brand size={22}/><Text style={[s.brandName,{fontSize:18,marginLeft:10}]}>AetherVM</Text></View> : <>
+              {screen === 'home' ? null : ['agents','activity','settings'].includes(screen) ? <View style={[s.header,{borderBottomWidth:0,paddingHorizontal:24}]}><Brand size={22}/><Text style={[s.brandName,{fontSize:18,marginLeft:10}]}>AetherVM</Text></View> : <>
               <View style={s.header}>
                 {(
                   <IconButton
@@ -1685,7 +1685,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               <Row
                 icon="computer"
                 title={profile.name + "’s computer"}
-                subtitle="Your agents share the same computer and files"
+                subtitle="This agent’s own computer and files"
                 onPress={() => {
                   setProfile(null);
                   setScreen("computer");
