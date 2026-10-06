@@ -4,19 +4,23 @@ Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gem
 
 ## Status
 
-The 0.4.0 preview introduces Home / Agents / Activity / Settings navigation,
-five-step onboarding, an inline computer preview and the original offline
-`grokbot-animation` SVG runtime. Shape and material are persisted independently
+The 0.4.1 preview has a minimal searchable conversation list, Google account
+profile photos and a happy bouncing character while startup finishes. The profile
+menu opens Agents, Activity and Settings. Five-step onboarding, an inline computer
+preview and the original offline
+`grokbot-animation` SVG runtime are retained. Shape and material are persisted independently
 of live task state. Each agent now owns an isolated computer, task lock and
 manual-control lease, with at most four simultaneous workers. The oldest agent
 inherits the previous account computer so its files remain accessible.
 
-The existing endpoint remains `https://aethervm-api.onrender.com`. AWS migration
-is prepared under `deploy/aws/` but could not be performed because SSH from the
-build environment is unreachable. Do not switch the app to EC2 until valid HTTPS
-and the live critical flows have been verified.
+The user deployed the backend to AWS at `https://16.16.124.235` and verified
+HTTPS health and certificate renewal. Keep the selected server URL in Settings;
+the build default remains the previous Render endpoint until critical live flows
+are verified. Update AWS with `sudo bash /opt/aethervm/deploy/aws/update.sh`.
+The modern desktop styling runs inside each Daytona computer, not on EC2.
+See `backend/DESKTOP.md` for the actual Debian/XFCE image and recovery details.
 
-This remains a personal preview. Agents own separate Daytona computers. Scheduled automation and parallel agents are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
+This remains a personal preview. Agents own separate Daytona computers. Scheduled automation and automatic multi-agent coordination are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
 
 ## 1. Configure Google login
 
@@ -123,4 +127,4 @@ Do not enable `DEV_AUTH=true` on an accessible server. It is a local test-only a
 
 See `DEPLOYMENT.md` for the selected Render Free + Turso Free libSQL route. `render.yaml` defines the service. The API supports `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` for durable remote storage on ephemeral hosts, and `ALLOWED_GOOGLE_EMAILS` restricts the personal deployment. Current examples contain the configured public Google Web client ID; no private provider credentials are shipped.
 
-The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.4.0. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.
+The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.4.1. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.
