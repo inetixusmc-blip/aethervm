@@ -16,6 +16,7 @@ assert.deepEqual(await startup.evaluate(()=>window.__aetherConfig().expressionPo
 await p.screenshot({path:root+'/startup-390.png'});
 await p.getByRole('button',{name:'Open Atlas',exact:true}).waitFor();
 assert.equal(await p.getByRole('tab').count(),0,'Home keeps the minimal conversation layout');
+assert.equal(await p.getByText('AetherVM',{exact:true}).count(),0,'Home has a single profile/search/create toolbar');
 assert(await p.locator('img[src="https://profile.example.test/avatar.svg"]').isVisible(),'Stored Google profile image renders');
 await p.locator('iframe').first().waitFor();
 await p.waitForTimeout(800);
