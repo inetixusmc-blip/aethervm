@@ -66,6 +66,7 @@ export default function Computer({
   useEffect(() => {
     if (!connected || tab !== "screen" || !visible) return;
     let alive = true;
+    let nextRecovery = 0;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
@@ -78,7 +79,10 @@ export default function Computer({
         if (alive) {
           setScreenError(e.message);
           // Auto-stop may have slept the machine while the app was in the background.
-          try{await api('/workspace/start','POST')}catch{}
+          if(Date.now()>=nextRecovery){
+            nextRecovery=Date.now()+30000;
+            try{await api('/workspace/start','POST')}catch{}
+          }
           // Keep the last frame visible during a transient polling failure.
         }
       }
