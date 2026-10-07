@@ -5,20 +5,8 @@ Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gem
 ## Status
 
 The 0.4.2 preview has a clean conversation list, a left account sidebar, dark rounded chat bubbles, message copy and latest-message edit/resend, removable/restorable assistants and an immediate curated Gemini model picker. Activity navigation is removed. Original character states remain available; small identity avatars keep their body and eyes visible while occasional/tap bounces use the source engine. The default mobile API is the user's AWS endpoint `https://16.16.124.235`; saved custom server choices are retained and the old Render default migrates to AWS. Newly provisioned Daytona computers require the Ubuntu 24.04 snapshot; older computers migrate `/workspace` on first use while retaining the original sandbox for recovery. Run `sudo bash /opt/aethervm/deploy/aws/update.sh` to deploy and build the Ubuntu snapshot. The OS image and live provider connection still need verification on that server. See `backend/DESKTOP.md` and `VALIDATION.md`.
-profile photos and a happy bouncing character while startup finishes. The profile
-menu opens Agents, Activity and Settings. Five-step onboarding, an inline computer
-preview and the original offline
-`grokbot-animation` SVG runtime are retained. Shape and material are persisted independently
-of live task state. Each agent now owns an isolated computer, task lock and
-manual-control lease, with at most four simultaneous workers. The oldest agent
-inherits the previous account computer so its files remain accessible.
 
-The user deployed the backend to AWS at `https://16.16.124.235` and verified
-HTTPS health and certificate renewal. Keep the selected server URL in Settings;
-the build default remains the previous Render endpoint until critical live flows
-are verified. Update AWS with `sudo bash /opt/aethervm/deploy/aws/update.sh`.
-The modern desktop styling runs inside each Daytona computer, not on EC2.
-See `backend/DESKTOP.md` for the actual Debian/XFCE image and recovery details.
+Google profile photos, five-step onboarding and the source character engine are retained. Body shape/material remain independent of task state. Each assistant has its own computer, task lock and manual-control lease; up to four tasks can run concurrently. The Ubuntu image passed the CI desktop smoke check; live Daytona migration and native Android integration still need verification.
 
 This remains a personal preview. Agents own separate Daytona computers. Scheduled automation and automatic multi-agent coordination are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
 
