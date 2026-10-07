@@ -33,6 +33,7 @@ await p.getByRole('button',{name:'Open Nova',exact:true}).waitFor();
 await p.getByRole('button',{name:'Close search',exact:true}).click();
 await p.getByRole('button',{name:'Open account menu',exact:true}).click();
 assert.equal(await p.getByText('Activity',{exact:true}).count(),0);
+await p.waitForTimeout(700); // Capture after the sidebar spring settles.
 await p.screenshot({path:root+'/sidebar-390.png'});
 await p.getByText('Settings',{exact:true}).click();
 await p.getByText('Google Gemini',{exact:true}).waitFor();
@@ -60,6 +61,8 @@ assert((await p.evaluate(()=>window.__copied)).includes('Check my project'));
 await p.getByRole('button',{name:'Edit last message',exact:true}).click();
 await p.getByLabel('Message your agent').fill('Check only the login flow');
 await p.getByRole('button',{name:'Send message',exact:true}).click();
+await p.getByText('Editing your last message',{exact:true}).waitFor({state:'hidden'});
+await p.getByText('Check my project, fix the authentication issue, and run the tests.',{exact:true}).waitFor({state:'hidden'});
 await p.getByText('Check only the login flow',{exact:true}).waitFor();
 assert.equal(await p.getByText('Check my project, fix the authentication issue, and run the tests.',{exact:true}).count(),0);
 await p.getByRole('button',{name:'Choose model',exact:true}).click();
