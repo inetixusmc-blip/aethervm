@@ -15,6 +15,9 @@ import httpx
 from sandboxes import get_sandbox, tool, python_command
 
 app=FastAPI(title='AetherVM API')
+# HttpOptions uses milliseconds. Reasoning and tool requests can exceed 12 seconds.
+GEMINI_TASK_TIMEOUT_MS=180000
+GEMINI_TEST_TIMEOUT_MS=60000
 auth=HTTPBearer()
 pool=ThreadPoolExecutor(max_workers=4)
 capacity=threading.BoundedSemaphore(4)
@@ -71,7 +74,7 @@ class Task(BaseModel):
     agent_id:str|None=None
     edit_message_id:int|None=Field(default=None,ge=1)
 @app.get('/health')
-def health(): return {'ok':True,'provider':os.getenv('SANDBOX_PROVIDER','daytona'),'version':'0.4.2'}
+def health(): return {'ok':True,'provider':os.getenv('SANDBOX_PROVIDER','daytona'),'version':'0.4.2','gemini_task_timeout_seconds':GEMINI_TASK_TIMEOUT_MS//1000,'gemini_test_timeout_seconds':GEMINI_TEST_TIMEOUT_MS//1000}
 @app.post('/auth/google')
 def login(body:Login):
     if os.getenv('DEV_AUTH')=='true' and body.id_token=='local-dev': info={'sub':'local-dev','name':'Developer'}
@@ -185,6 +188,7 @@ def task_error(exc,stage):
     code=getattr(exc,'code',None)
     message=str(getattr(exc,'message','')).lower()
     if stage=='model':
+        if code==504: return 'Gemini timed out (504). This does not mean your API key is invalid. Try a shorter task or another available Flash model; your computer and files are preserved.'
         if code==429: return 'Gemini quota reached (429). Wait before retrying, or select another model available to your key.'
         if code in (401,403) or 'api key' in message: return 'Gemini rejected your API key or access. Test the connection in Settings and check this model is enabled.'
         if code==404: return 'This Gemini model is unavailable (404). Test the connection and choose an available model in Settings.'
@@ -230,7 +234,7 @@ def run(job,user,body):
                 emit(job,{'kind':'status','text':'Desktop could not start; shell and files remain available.'})
         with db() as c: history=[dict(r) for r in c.execute('SELECT role,text FROM messages WHERE user=? AND agent_id=? ORDER BY id DESC LIMIT 30',(user,agent['id']))][::-1]
         contents=[types.Content(role='model' if m['role']=='assistant' else 'user',parts=[types.Part(text=m['text'])]) for m in history]
-        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=90000,retry_options=types.HttpRetryOptions(attempts=1)))
+        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=GEMINI_TASK_TIMEOUT_MS,retry_options=types.HttpRetryOptions(attempts=1)))
         with db() as c: saved_skills=[dict(r) for r in c.execute('SELECT name,instructions FROM skills WHERE user=? AND agent_id=?',(user,agent['id']))]
         context=SYSTEM+f"\nYour name is {agent['name']}. Your role is {agent['role']}. Responsibilities: {agent['instructions']}\nSaved memory: {agent['memory']}\nReusable skills: {json.dumps(saved_skills)}"
         waiting_for_user=False
@@ -491,7 +495,7 @@ def test_provider(body:ProviderKey,user=Depends(current_user)):
     client=None
     phase='model listing'
     try:
-        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=12000,retry_options=types.HttpRetryOptions(attempts=1)))
+        client=genai.Client(api_key=body.api_key,http_options=types.HttpOptions(timeout=GEMINI_TEST_TIMEOUT_MS,retry_options=types.HttpRetryOptions(attempts=1)))
         from model_catalog import available_models
         models=available_models(client)
         checked=None
@@ -499,7 +503,7 @@ def test_provider(body:ProviderKey,user=Depends(current_user)):
         checked=body.model if body.model and any(m['id']==body.model for m in models) else (preferred[0]['id'] if preferred else None)
         if not checked: raise HTTPException(400,'No Gemini text models are available to this key.')
         phase='simple text request'
-        client.models.generate_content(model=checked,contents='Reply OK.',config=types.GenerateContentConfig(max_output_tokens=1024))
+        generate_with_retries(client,model=checked,contents='Reply OK.',config=types.GenerateContentConfig(max_output_tokens=1024))
         phase='request with computer tools'
         generate_with_retries(client,model=checked,contents='Reply OK. Do not use tools.',config=types.GenerateContentConfig(tools=[TOOLS],automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),max_output_tokens=1024))
         return {'ok':True,'models':models,'model_checked':checked}
