@@ -31,7 +31,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A backend mobile deploy qa tests .gitignore README.md DEPLOYMENT.md VALIDATION.md render.yaml
-          git diff --cached --quiet || git commit -m "AetherVM 0.4.4: automatic Vercel AI Gateway support"
+          git diff --cached --quiet || git commit -m "AetherVM backend 0.4.5: reliable page reads and visible browser controls"
           git push
       - uses: actions/setup-node@v4
         with:
@@ -95,7 +95,7 @@ jobs:
           import zipfile
           from pathlib import Path
           with zipfile.ZipFile('AetherVM-source.zip') as z:
-              for name in ['Dockerfile.ubuntu','desktop_theme.py','desktop_smoke.py']:
+              for name in ['Dockerfile.ubuntu','desktop_theme.py','desktop_smoke.py','browser_tools.py','browser_smoke.py']:
                   p=Path('backend')/name
                   p.write_bytes(z.read('aethervm/backend/'+name))
           PYTHON
@@ -111,9 +111,16 @@ jobs:
           docker exec aethervm-desktop-check python3 /tmp/desktop_theme.py
           docker cp backend/desktop_smoke.py aethervm-desktop-check:/tmp/desktop_smoke.py
           docker exec aethervm-desktop-check python3 /tmp/desktop_smoke.py
+          docker cp backend/browser_tools.py aethervm-desktop-check:/tmp/browser_tools.py
+          docker cp backend/browser_smoke.py aethervm-desktop-check:/tmp/browser_smoke.py
+          docker exec aethervm-desktop-check python3 /tmp/browser_smoke.py
+          docker cp aethervm-desktop-check:/workspace/browser-checks.json browser-checks.json
+          docker cp aethervm-desktop-check:/workspace/browser-desktop.png browser-desktop.png
           docker cp aethervm-desktop-check:/workspace/ubuntu-desktop.png ubuntu-desktop.png
       - uses: actions/upload-artifact@v4
         with:
           name: AetherVM-Ubuntu-desktop
-          path: ubuntu-desktop.png
-
+          path: |
+            ubuntu-desktop.png
+            browser-desktop.png
+            browser-checks.json
