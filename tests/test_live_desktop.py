@@ -116,3 +116,28 @@ def test_failed_cloud_delete_remains_retryable_and_unrestorable(monkeypatch):
 def test_delete_unknown_is_not_success_and_never_calls_provider(monkeypatch):
     monkeypatch.setattr(sandboxes,'delete_sandbox',lambda *a:pytest.fail('no access'))
     assert client.delete('/agents/not-owned?permanent=true',headers=token()).status_code==404
+
+def test_clipboard_reads_python_and_reports_missing_selection():
+    box=object.__new__(adapter.E2BSandbox);commands=[]
+    def execute(command):
+        commands.append(command)
+        if len(commands)==1:return {'exit_code':0,'output':''}
+        args=shlex.split(command)
+        assert args[:2]==['python3','-c'] and 'clipboard_get()' in args[2]
+        return {'exit_code':0,'output':'Copied text\n'}
+    box.execute=execute
+    assert box.clipboard()=='Copied text'
+    box.execute=lambda command:{'exit_code':1 if command.startswith('python3 -c ') else 0,'output':''}
+    with pytest.raises(RuntimeError):box.clipboard()
+
+def test_stale_drag_failure_releases_operation_lock(monkeypatch):
+    h=token();aid=agent(h);key='local-dev:'+aid;job='drag-job-'+aid
+    main.cancelled[job]=threading.Event();main.control_until[key]=0
+    main.manual_drag[key]={'x':10,'y':20,'button':'left'}
+    def fail(*a):raise RuntimeError('Disconnected')
+    monkeypatch.setattr(sandboxes,'existing_sandbox',lambda sid:SimpleNamespace(pointer=fail))
+    with pytest.raises(RuntimeError):
+        with main.agent_operation(key,job):pass
+    lock=main.operation_lock(key)
+    assert lock.acquire(blocking=False)
+    lock.release();main.cancelled.pop(job)

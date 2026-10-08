@@ -14,10 +14,13 @@ p=Path('/workspace/stream-auth.json');p.write_text(json.dumps(config));p.chmod(0
 # A changing application proves that frames arrive through RFB without screenshot requests.
 source="""import tkinter as tk
 r=tk.Tk();r.title('Continuous desktop stream check');r.geometry('1000x500+50+100');r.configure(bg='#172c49')
+r.clipboard_clear();r.clipboard_append('Ubuntu clipboard checked')
 l=tk.Label(r,text='',font=('Ubuntu',32),fg='#b4d6ff',bg='#172c49');l.pack(expand=True)
 def update(n=0):
  l.config(text='LIVE STREAM · frame '+str(n));r.after(100,lambda:update(n+1))
 update();r.mainloop()
 """
 subprocess.Popen(['python3','-c',source],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+time.sleep(.5)
+assert box.clipboard()=='Ubuntu clipboard checked'
 print('Production VNC bootstrap ready: password authentication, local VNC, read-only transport.')

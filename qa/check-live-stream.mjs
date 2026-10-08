@@ -5,7 +5,7 @@ const config=JSON.parse(fs.readFileSync('stream-auth.json','utf8'));
 const exported=fs.readFileSync('mobile/components/computer/live.generated.ts','utf8');
 const html=JSON.parse(exported.slice(exported.indexOf('= ')+2).trim().replace(/;$/,''));
 const browser=await chromium.launch({headless:true,args:['--no-sandbox']});const p=await browser.newPage({viewport:{width:390,height:620}});const errors=[];p.on('pageerror',e=>errors.push(e.message));
-await p.addInitScript(()=>{window.events=[];window.ReactNativeWebView={postMessage:s=>window.events.push(JSON.parse(s))};const Original=window.WebSocket;window.WebSocket=class extends Original{constructor(url,protocols){super('ws://127.0.0.1:6080/websockify',protocols)}}});
+await p.addInitScript(()=>{window.events=[];window.ReactNativeWebView={postMessage:s=>window.events.push(JSON.parse(s))};const Original=window.WebSocket;window.WebSocket=function(url,protocols){return new Original('ws://127.0.0.1:6080/websockify',protocols)};window.WebSocket.prototype=Original.prototype;Object.assign(window.WebSocket,{CONNECTING:0,OPEN:1,CLOSING:2,CLOSED:3})});
 await p.goto('about:blank');
 await p.setContent(html.replace('connect-src wss://*.e2b.app','connect-src ws://127.0.0.1:6080'));
 await p.waitForFunction(()=>typeof window.__desktopApply==='function');

@@ -157,7 +157,9 @@ for i in range(1,9):
         if check['exit_code']!=0:raise RuntimeError('Clipboard service unavailable')
         source="import tkinter as tk; r=tk.Tk(); r.withdraw(); "
         if text is None:
-            return self.execute(source+"print(r.clipboard_get()); r.destroy()")['output'].rstrip('\n')
+            result=self.execute('python3 -c '+shlex.quote(source+"print(r.clipboard_get()); r.destroy()"))
+            if result['exit_code']!=0:raise RuntimeError('Computer clipboard is empty or unavailable')
+            return result['output'].rstrip('\n')
         # Keep ownership alive long enough for applications to request the selection.
         self.write_bytes(text.encode(),'/tmp/aether-clipboard-text')
         source+="r.clipboard_clear(); r.clipboard_append(open('/tmp/aether-clipboard-text').read()); r.after(30000,r.destroy); r.mainloop()"
