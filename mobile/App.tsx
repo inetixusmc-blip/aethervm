@@ -529,7 +529,6 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     const key=draftKey.trim()||config.key;
     setDraftModels(modelsForKey(key));
     setDraftModel(current=>modelForKey(key,current));
-    setConnection('');
     if(!detectProvider(key)||key.length<10)return;
     let alive=true;
     const timer=setTimeout(()=>api('/provider/models','POST',{api_key:key}).then(r=>{
@@ -663,7 +662,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     if (!text.trim() || !targetAgent || targetAgent.job?.status === "running" || sending.current)
       return;
     if (!config.key) {
-      setDraftModel(config.model);setProviderOpen(true);
+      setConnection("");setDraftModel(config.model);setProviderOpen(true);
       return;
     }
     sending.current = true;
@@ -1118,7 +1117,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           <Pressable
             accessibilityRole="button"
             style={s.setupBanner}
-            onPress={() => {setDraftModel(config.model);setProviderOpen(true)}}
+            onPress={() => {setConnection("");setDraftModel(config.model);setProviderOpen(true)}}
           >
             <Icon name="key" size={17} color={C.accent} />
             <Text style={[s.smallText, { flex: 1, color: C.accent }]}>
@@ -1226,7 +1225,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               ? "API key saved securely on this device"
               : "Connect your own API key"
           }
-          onPress={() => {setDraftModel(config.model);setProviderOpen(true)}}
+          onPress={() => {setConnection("");setDraftModel(config.model);setProviderOpen(true)}}
           right={
             <View style={s.inline}>
               <Text style={[s.tiny, { color: config.key ? C.green : C.muted }]}>
@@ -1240,7 +1239,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           icon="settings"
           title="Default model"
           subtitle={config.model}
-          onPress={() => {setDraftModel(config.model);setProviderOpen(true)}}
+          onPress={() => {setConnection("");setDraftModel(config.model);setProviderOpen(true)}}
         />
       </Section>
       <Section title="APPEARANCE">
@@ -1298,7 +1297,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         subtitle="Replay the guided setup"
         onPress={() => setOnboarding(true)}
       />
-      <Text style={s.settingsFooter}>AetherVM · Android preview 0.4.2</Text>
+      <Text style={s.settingsFooter}>AetherVM · Android preview 0.4.4</Text>
     </ScrollView>
   );
   if (!ready || !launchReady)
@@ -1449,7 +1448,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         </Sheet>}
         {modelPicker&&<Sheet title="Choose a model" subtitle="Models for chatting, reasoning and computer tasks." onClose={()=>setModelPicker(false)}>
           {models.map(m=><Row key={m.id} icon="spark" title={m.name} subtitle={m.description} right={config.model===m.id?<Icon name="check" color={C.text}/>:undefined} onPress={()=>{persist({...config,model:m.id}).catch(report);setModelPicker(false)}}/>)}
-          {!config.key&&<Button label="Add API key" onPress={()=>{setModelPicker(false);setDraftModel(config.model);setProviderOpen(true)}}/>}
+          {!config.key&&<Button label="Add API key" onPress={()=>{setModelPicker(false);setConnection("");setDraftModel(config.model);setProviderOpen(true)}}/>}
         </Sheet>}
         {editing && (
           <Sheet
@@ -1667,9 +1666,9 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               <View>
                 <Text style={s.rowTitle}>{providerLabel(draftKey.trim()||config.key)}</Text>
                 <Text style={s.caption}>
-                  {config.key
-                    ? "Your key is saved securely"
-                    : "Bring your own API key"}
+                  {draftKey.trim()
+                    ? (detectProvider(draftKey)?"Detected automatically":"Paste your provider API key")
+                    : config.key?"Your key is saved securely":"Bring your own API key"}
                 </Text>
               </View>
             </View>
@@ -1677,7 +1676,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               label={config.key ? "Replace API key" : "API key"}
               secret
               value={draftKey}
-              onChange={v=>{if(busy!=="provider")setDraftKey(v)}}
+              onChange={v=>{if(busy!=="provider"){setDraftKey(v);setConnection("")}}}
               placeholder={
                 config.key ? "••••••••••••••••" : "Paste Gemini or Gateway API key"
               }
