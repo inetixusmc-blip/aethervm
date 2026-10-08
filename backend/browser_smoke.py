@@ -57,6 +57,9 @@ opened=check('visible process reconnects across independent calls',run_action('b
 link=next(e['ref'] for e in opened['elements'] if e['name']=='Open result')
 clicked=check('browser clicks an observed link and returns new page',run_action('browser_click',{'ref':link}))
 assert 'clicked=yes' in clicked['url']
+assert clicked['cursor']['kind']=='click' and 0<=clicked['cursor']['x']<1280 and 0<clicked['cursor']['y']<800
+assert typed['cursor']['kind']=='move' and typed['cursor']['x']!=clicked['cursor']['x']
+checks.append('visible cursor follows actual browser controls')
 read=check('read reconnects to the same browser page',run_action('browser_read',{}))
 assert read['url']==clicked['url']
 check('keyboard returns a fresh observation',run_action('browser_key',{'key':'Tab'}))

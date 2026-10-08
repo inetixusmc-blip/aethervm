@@ -147,6 +147,19 @@ def run_action(action, args):
             if action in ('browser_click', 'browser_type'):
                 element = page.evaluate_handle('(ref) => window.__aetherControls?.[ref] || null', str(args.get('ref', ''))).as_element()
                 if element is None or not element.evaluate('(e) => e.isConnected'): return failure('stale_reference')
+                # Playwright's synthetic pointer does not move the X11 pointer.
+                # Put the visible AI cursor over the observed control, including
+                # the window frame and Chromium toolbar above page coordinates.
+                element.scroll_into_view_if_needed()
+                point=element.evaluate('''e => {const r=e.getBoundingClientRect();
+                    return {x:Math.round(screenX+(outerWidth-innerWidth)/2+r.x+r.width/2),
+                            y:Math.round(screenY+outerHeight-innerHeight+r.y+r.height/2)}}''')
+                position=subprocess.check_output(['xdotool','getmouselocation','--shell'],text=True)
+                origin={k:int(v) for k,v in re.findall(r'^(X|Y)=(\d+)$',position,re.M)}
+                for step in range(1,9):
+                    t=step/8;t=t*t*(3-2*t)
+                    subprocess.run(['xdotool','mousemove',str(round(origin['X']+(point['x']-origin['X'])*t)),str(round(origin['Y']+(point['y']-origin['Y'])*t))],check=True)
+                    time.sleep(.012)
                 if action == 'browser_click': element.click()
                 else:
                     element.fill(str(args.get('text', '')))
@@ -155,7 +168,6 @@ def run_action(action, args):
             elif action != 'browser_read': return failure('action_failed')
             result=read_page(page)
             if action in ('browser_click','browser_type'):
-                import subprocess,re
                 try:
                     position=subprocess.check_output(['xdotool','getmouselocation','--shell'],text=True)
                     coords={k:int(v) for k,v in re.findall(r'^(X|Y)=(\d+)$',position,re.M)}
