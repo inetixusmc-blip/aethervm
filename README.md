@@ -1,8 +1,10 @@
 # AetherVM
 
-Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gemini uses real function calls to execute commands, write/read files, and browse with Playwright in isolated Linux sandboxes. No simulated task results.
+Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gemini and Vercel AI Gateway use real function calls to execute commands, write/read files, and browse with Playwright in isolated Linux sandboxes. No simulated task results.
 
 ## Status
+
+The 0.4.4 preview adds automatic Gemini/Vercel AI Gateway key detection in Settings and onboarding. Gateway provides a small selection of Claude, GPT and Gemini models with function tools and image input, filtered against its live model metadata. Connection testing makes actual authenticated text and tool requests; public model listing alone does not validate a Gateway key. Unknown key prefixes and mismatched provider/model IDs are rejected without probing another service. Keys stay in SecureStore and transient backend memory. Gateway credit, access, quota and timeout errors have provider-specific messages.
 
 The 0.4.3 preview uses compact conversation bubbles and an intrinsic-width agent header. Tap or hold a message to reveal copy/edit actions. The computer is shown only when explicitly opened. Natural task updates are separate persisted messages; the small source-animated worker follows the latest message with a muted action label. Normal conversation avoids VM startup. Real work starts the computer on demand, prefers direct file/shell/page-reading tools where suitable, and receives screenshots in the same response as desktop actions. Gemini generation timeouts remain 180 seconds for tasks and 60 seconds for connection probes, with bounded transient retries. Native/provider latency is not benchmarked by fixture tests.
 
@@ -32,7 +34,7 @@ cp .env.example .env
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Use one API process: the task executor and cancellation flags are process-local. SQLite or configured Turso libSQL persists accounts' workspace mappings, profiles, memory, skills, messages and task traces. Restarted jobs become interrupted. Put the service behind HTTPS (a reverse proxy or a tunnel); Android app intentionally requires an HTTPS URL. Keep the SQLite file private and backed up. Google sessions expire after seven days; sign out revokes the current session. Gemini keys are kept in Android SecureStore and transient backend memory, not SQLite. Prompts, tool arguments and command output are saved in SQLite, so do not place secrets in task text.
+Use one API process: the task executor and cancellation flags are process-local. SQLite or configured Turso libSQL persists accounts' workspace mappings, profiles, memory, skills, messages and task traces. Restarted jobs become interrupted. Put the service behind HTTPS (a reverse proxy or a tunnel); Android app intentionally requires an HTTPS URL. Keep the SQLite file private and backed up. Google sessions expire after seven days; sign out revokes the current session. AI provider keys are kept in Android SecureStore and transient backend memory, not SQLite. Prompts, tool arguments and command output are saved in SQLite, so do not place secrets in task text.
 
 ### Daytona (default)
 
@@ -72,7 +74,7 @@ npx eas-cli build:configure
 npx eas-cli build --platform android --profile preview
 ```
 
-EAS needs your Expo account and available build quota. When Google Android OAuth asks for SHA-1, use the signing certificate of the resulting build (EAS credentials or your local debug certificate). Rebuild after changing public environment variables. Install the APK, sign in with Google, then open Settings and enter your Gemini key. The curated model picker is available immediately; key-specific models refresh automatically. Test connection is an optional diagnostic for text and tool calls. The deployed HTTPS backend address is already configured; Advanced settings can point the app to a different server.
+EAS needs your Expo account and available build quota. When Google Android OAuth asks for SHA-1, use the signing certificate of the resulting build (EAS credentials or your local debug certificate). Rebuild after changing public environment variables. Install the APK, sign in with Google, then open Settings and paste your Gemini (AIza…) or Vercel AI Gateway (vck_…) key. The app automatically selects the provider and a compatible default model; no provider dropdown is needed. The curated model picker is available immediately; key-specific models refresh automatically. Test connection is an optional diagnostic for text and tool calls. The deployed HTTPS backend address is already configured; Advanced settings can point the app to a different server.
 
 ## App features
 
@@ -82,7 +84,7 @@ EAS needs your Expo account and available build quota. When Google Android OAuth
 - Markdown responses, copyable code, rounded conversation bubbles, copyable user/assistant messages, editable last turns, and explicit waiting/error/cancelled states.
 - Daytona desktop screenshots, visible browser launch, mouse/keyboard actions, and exclusive manual/agent control. A disconnected manual-control lease expires automatically.
 - Navigate workspace folders, preview and export files, and attach files up to 4 MB. Bounded terminal commands expose real output and exit status.
-- Gemini key stored in Android SecureStore, connection testing and available-model selection. Keys remain transient on the backend, outside the database.
+- Gemini or Vercel AI Gateway key stored in Android SecureStore, connection testing and available-model selection. Keys remain transient on the backend, outside the database.
 - Saved skills become agent instructions. Scheduled runs are clearly unavailable in this version.
 - Restores server conversations and tasks after reopening the app. Free-host cold starts use a longer request timeout with readable errors.
 - Stop requests take effect after the current bounded command or model request. Cancellation does not undo completed actions or necessarily stop background processes.
@@ -119,3 +121,20 @@ Do not enable `DEV_AUTH=true` on an accessible server. It is a local test-only a
 See `DEPLOYMENT.md` for the selected Render Free + Turso Free libSQL route. `render.yaml` defines the service. The API supports `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` for durable remote storage on ephemeral hosts, and `ALLOWED_GOOGLE_EMAILS` restricts the personal deployment. Current examples contain the configured public Google Web client ID; no private provider credentials are shipped.
 
 The native `mobile/android` project is now included. Its preview release variant uses the debug certificate matching the SHA-1 you registered. `.github/workflows/android.yml` can build an ARM64 sideload APK in GitHub Actions. The backend URL can be entered in the installed app's Settings; it does not need to be known at build time. The workflow has produced preview APKs on your GitHub account. The signing fingerprint remains unchanged in 0.4.2. Use the repository files for current source; the earlier imported AetherVM-source.zip is a historical archive.
+
+## Updating the AWS backend for 0.4.4
+
+In the existing SSH session:
+
+```bash
+cd /opt/aethervm
+sudo git pull --ff-only
+sudo docker compose -f deploy/aws/compose.yml up -d --build --wait
+curl --fail https://16.16.124.235/health
+```
+
+Health should report `version: 0.4.4` and `ai_providers: [gemini, vercel]`.
+No Gateway environment variable or new inbound port is required: paste the key
+in the app. Model requests use outbound HTTPS to `ai-gateway.vercel.sh`.
+This provider update does not require rebuilding or migrating Daytona snapshots.
+Gateway API reference: https://vercel.com/docs/ai-gateway/openai-compat/rest-api

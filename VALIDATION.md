@@ -64,3 +64,17 @@ chat bubbles, copy/edit, remove/restore, immediate models and continuous source
 character rendering during work, plus the Ubuntu image build and desktop smoke
 test. CI outcomes are recorded by the actual build run. Native credentials and
 computer requests in browser QA are fixtures.
+
+## 0.4.4 Gateway checks
+
+66 backend tests pass locally. New checks cover prefix detection without network
+probing, rejection of unknown keys and provider/model mismatches, capability
+filtering, actual authentication and tool probes, credit/access/quota/timeout
+classification, transient retries without tool replay, native tool IDs and opaque
+reasoning metadata, screenshot image payloads, progress-message persistence,
+VM-free greetings and dropping client authorization headers after requests.
+TypeScript and 702 original character comparisons pass. The CI browser suite
+checks immediate Settings/onboarding provider switching, model selection, save
+without testing, switching back to Gemini and Gateway model IDs in task requests.
+These provider calls use fixtures. No user's real Gateway key is used in tests;
+real Gateway access/credits and native-device behavior need user verification.

@@ -26,7 +26,7 @@ def test_edit_latest_user_turn_is_scoped_and_replaces_answer(monkeypatch):
         for role,text in [('user','First'),('assistant','First answer'),('user','Last'),('assistant','Old answer')]:
             c.execute('INSERT INTO messages(user,role,text,agent_id,created) VALUES(?,?,?,?,?)',('local-dev',role,text,aid,1))
     msgs=client.get('/messages?agent_id='+aid,headers=h).json()
-    payload={'prompt':'Edited last','api_key':'test-only-api-key','agent_id':aid,'edit_message_id':msgs[0]['id']}
+    payload={'prompt':'Edited last','api_key':'AIza-test-fixture-not-real','agent_id':aid,'edit_message_id':msgs[0]['id']}
     assert client.post('/tasks',headers=h,json=payload).status_code==409
     assert client.get('/messages?agent_id='+aid,headers=h).json()==msgs
     # No worker for this test: verify atomic submission and preserved earlier turns.
@@ -44,7 +44,7 @@ def test_model_discovery_does_not_generate_and_excludes_specialist_models(monkey
     def generate(**kwargs):raise AssertionError('Discovery must not generate')
     models=SimpleNamespace(list=lambda:[SimpleNamespace(name='models/'+n,supported_actions=['generateContent']) for n in names],generate_content=generate)
     monkeypatch.setattr(main.genai,'Client',lambda **kwargs:SimpleNamespace(models=models,close=lambda:None))
-    r=client.post('/provider/models',headers=token(),json={'api_key':'test-only-api-key'})
+    r=client.post('/provider/models',headers=token(),json={'api_key':'AIza-test-fixture-not-real'})
     assert r.status_code==200
     assert [m['id'] for m in r.json()['models']]==names[:2]
 

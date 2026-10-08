@@ -44,7 +44,7 @@ import HomeScreen from './screens/HomeScreen';
 import ProfileImage from './components/ProfileImage';
 import StartupScreen from './components/StartupScreen';
 import Sidebar from './components/Sidebar';
-import {agentModels,curateModels,GeminiModel} from './models';
+import {agentModels,curateModels,GeminiModel,detectProvider,providerLabel,modelsForKey,modelForKey,keyError} from './models';
 import Onboarding from "./components/Onboarding";
 import SlideSurface from "./components/SlideSurface";
 
@@ -358,6 +358,8 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     [editMessage,setEditMessage]=useState<Message|null>(null),
     [draftKey, setDraftKey] = useState(""),
     [models, setModels] = useState<GeminiModel[]>(agentModels),
+    [draftModels,setDraftModels]=useState<GeminiModel[]>(agentModels),
+    [draftModel,setDraftModel]=useState(defaults.model),
     [connection, setConnection] = useState(""),
     [advanced, setAdvanced] = useState(false),
     [urlDraft, setUrlDraft] = useState(""),
@@ -486,6 +488,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               ? saved.url.trim().replace(/\/+$/, "")
               : DEFAULT_URL;
           if(saved.url==='https://aethervm-api.onrender.com')saved.url=DEFAULT_URL;
+          saved.model=modelForKey(saved.key,saved.model);
           setConfig(saved);
         }
         setName((await SecureStore.getItemAsync("name")) || "");
@@ -512,14 +515,29 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     });
   }, []);
   useEffect(()=>{
-    if(!ready||!token||!config.key)return;
+    setModels(modelsForKey(config.key));
+    if(!ready||!token||!detectProvider(config.key))return;
     let alive=true;
     api('/provider/models','POST',{api_key:config.key}).then(r=>{
-      const available=curateModels(r.models||[]);
+      const available=curateModels(r.models||[],detectProvider(config.key));
       if(alive&&available.length)setModels(available);
-    }).catch(()=>{}); // Cached built-in choices remain usable during provider outages.
+    }).catch(()=>{});
     return()=>{alive=false};
   },[ready,token,config.key,config.url]);
+  useEffect(()=>{
+    if(!providerOpen)return;
+    const key=draftKey.trim()||config.key;
+    setDraftModels(modelsForKey(key));
+    setDraftModel(current=>modelForKey(key,current));
+    setConnection('');
+    if(!detectProvider(key)||key.length<10)return;
+    let alive=true;
+    const timer=setTimeout(()=>api('/provider/models','POST',{api_key:key}).then(r=>{
+      const available=curateModels(r.models||[],detectProvider(key));
+      if(alive&&available.length){setDraftModels(available);setDraftModel(current=>available.some(m=>m.id===current)?current:available[0].id);}
+    }).catch(()=>{}),500);
+    return()=>{alive=false;clearTimeout(timer)};
+  },[providerOpen,draftKey,config.key,config.url]);
   useEffect(() => {
     if (!token || !ready) return;
     let alive = true;
@@ -645,7 +663,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     if (!text.trim() || !targetAgent || targetAgent.job?.status === "running" || sending.current)
       return;
     if (!config.key) {
-      setProviderOpen(true);
+      setDraftModel(config.model);setProviderOpen(true);
       return;
     }
     sending.current = true;
@@ -661,7 +679,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       const result = await api("/tasks", "POST", {
         prompt: full,
         api_key: config.key,
-        model: config.model,
+        model: modelForKey(config.key,config.model),
         agent_id: aid,
         ...(editMessage?{edit_message_id:editMessage.id}:{}),
       });
@@ -826,21 +844,24 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     setConnection("");
     try {
       const key = draftKey.trim() || config.key;
-      if (!key) throw new Error("Enter your Gemini API key first.");
+      if (!key) throw new Error("Enter your API key first.");
+      if(keyError(key))throw new Error(keyError(key));
       const result = await api("/provider/test", "POST", {
         api_key: key,
-        model: config.model,
+        model: modelForKey(key,draftModel),
       });
-      setModels(curateModels(result.models));
+      setModels(curateModels(result.models,detectProvider(key)));
+      setDraftModels(curateModels(result.models,detectProvider(key)));
+      setDraftModel(result.model_checked || modelForKey(key,draftModel));
       await persist({
         ...config,
         key,
-        model: result.model_checked || config.model,
+        model: result.model_checked || modelForKey(key,draftModel),
       });
       setDraftKey("");
-      setConnection("Connected to Google Gemini");
+      setConnection("Connected to "+providerLabel(key));
     } catch (e) {
-      report(e, "Could not connect to Gemini");
+      report(e, "Could not connect to your AI provider");
       setConnection("Connection failed");
     } finally {
       setBusy("");
@@ -1097,11 +1118,11 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           <Pressable
             accessibilityRole="button"
             style={s.setupBanner}
-            onPress={() => setProviderOpen(true)}
+            onPress={() => {setDraftModel(config.model);setProviderOpen(true)}}
           >
             <Icon name="key" size={17} color={C.accent} />
             <Text style={[s.smallText, { flex: 1, color: C.accent }]}>
-              Connect Gemini to give your agent a job
+              Connect your AI provider to give your agent a job
             </Text>
             <Icon name="chevron" size={15} color={C.accent} />
           </Pressable>
@@ -1199,13 +1220,13 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       <Section title="AI PROVIDER">
         <Row
           icon="spark"
-          title="Google Gemini"
+          title={providerLabel(config.key)}
           subtitle={
             config.key
               ? "API key saved securely on this device"
               : "Connect your own API key"
           }
-          onPress={() => setProviderOpen(true)}
+          onPress={() => {setDraftModel(config.model);setProviderOpen(true)}}
           right={
             <View style={s.inline}>
               <Text style={[s.tiny, { color: config.key ? C.green : C.muted }]}>
@@ -1219,7 +1240,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           icon="settings"
           title="Default model"
           subtitle={config.model}
-          onPress={() => setProviderOpen(true)}
+          onPress={() => {setDraftModel(config.model);setProviderOpen(true)}}
         />
       </Section>
       <Section title="APPEARANCE">
@@ -1314,7 +1335,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               <Text style={s.loginHint}>
                 {busy === "login"
                   ? "Connecting to your workspace…"
-                  : "Use your own Gemini API key."}
+                  : "Use your own Gemini or Vercel AI Gateway key."}
               </Text>
             </View>
             <View style={s.loginLegal}>
@@ -1428,7 +1449,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         </Sheet>}
         {modelPicker&&<Sheet title="Choose a model" subtitle="Models for chatting, reasoning and computer tasks." onClose={()=>setModelPicker(false)}>
           {models.map(m=><Row key={m.id} icon="spark" title={m.name} subtitle={m.description} right={config.model===m.id?<Icon name="check" color={C.text}/>:undefined} onPress={()=>{persist({...config,model:m.id}).catch(report);setModelPicker(false)}}/>)}
-          {!config.key&&<Button label="Add Gemini API key" onPress={()=>{setModelPicker(false);setProviderOpen(true)}}/>}
+          {!config.key&&<Button label="Add API key" onPress={()=>{setModelPicker(false);setDraftModel(config.model);setProviderOpen(true)}}/>}
         </Sheet>}
         {editing && (
           <Sheet
@@ -1633,7 +1654,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         {providerOpen && (
           <Sheet
             title="AI provider"
-            subtitle="Power your agents with your own Gemini key."
+            subtitle="Paste a Gemini or Vercel AI Gateway key. We detect the provider automatically."
             onClose={() => {
               setProviderOpen(false);
               setDraftKey("");
@@ -1644,7 +1665,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 <Icon name="spark" color={C.accent} size={24} />
               </View>
               <View>
-                <Text style={s.rowTitle}>Google Gemini</Text>
+                <Text style={s.rowTitle}>{providerLabel(draftKey.trim()||config.key)}</Text>
                 <Text style={s.caption}>
                   {config.key
                     ? "Your key is saved securely"
@@ -1656,9 +1677,9 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               label={config.key ? "Replace API key" : "API key"}
               secret
               value={draftKey}
-              onChange={setDraftKey}
+              onChange={v=>{if(busy!=="provider")setDraftKey(v)}}
               placeholder={
-                config.key ? "••••••••••••••••" : "Enter your Gemini API key"
+                config.key ? "••••••••••••••••" : "Paste Gemini or Gateway API key"
               }
             />
             <Text style={[s.caption, { marginBottom: 24 }]}>
@@ -1666,33 +1687,12 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               only when connecting or running a task.
             </Text>
             <Text style={s.fieldLabel}>Default model</Text>
-            {models.length ? (
-              models.map((m) => (
-                <Pressable
-                  key={m.id}
-                  accessibilityRole="button"
-                  onPress={() =>
-                    persist({ ...config, model: m.id }).catch(report)
-                  }
-                  style={s.modelRow}
-                >
-                  <Text style={[s.smallText, { flex: 1 }]}>{m.name}</Text>
-                  {config.model === m.id && (
-                    <Icon name="check" color={C.accent} size={18} />
-                  )}
-                </Pressable>
-              ))
-            ) : (
-              <Field
-                label="Model ID"
-                value={config.model}
-                onChange={(model) => setConfig((c) => ({ ...c, model }))}
-                placeholder="gemini-2.5-flash"
-              />
-            )}
+            {draftModels.map(m=><Pressable key={m.id} accessibilityRole="button" disabled={busy==="provider"} onPress={()=>setDraftModel(m.id)} style={s.modelRow}>
+              <Text style={[s.smallText,{flex:1}]}>{m.name}</Text>{draftModel===m.id&&<Icon name="check" color={C.accent} size={18}/>}
+            </Pressable>)}
             <View style={{ height: 22 }} />
             <Button
-              label={config.key ? "Test connection" : "Connect Gemini"}
+              label={config.key ? "Test connection" : "Connect provider"}
               onPress={testConnection}
               loading={busy === "provider"}
             />
@@ -1709,11 +1709,11 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
             <Button
               label="Done"
               secondary
-              onPress={() => {
+              disabled={busy==="provider"}
+              onPress={async () => {
                 const key=draftKey.trim()||config.key;
-                persist({...config,key}).catch(report);
-                setProviderOpen(false);
-                setDraftKey("");
+                if(key&&keyError(key)){report(new Error(keyError(key)),"Key not recognized");return;}
+                try {await persist({...config,key,model:modelForKey(key,draftModel)});setProviderOpen(false);setDraftKey("");}catch(e){report(e);}
               }}
             />
           </Sheet>
@@ -1817,8 +1817,8 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           <Sheet title={policy} onClose={() => setPolicy("")}>
             <Text style={s.bodyText}>
               {policy === "Privacy"
-                ? "AetherVM verifies your Google identity. Your agents, conversations, task records and profiles are stored on your configured server and its database. Files and browser sessions stay in your Daytona computer. Your Gemini API key is stored securely on this device and used by the server transiently for model requests; it is not saved in the database. Gemini receives the prompts and tool results needed to perform your tasks."
-                : "AetherVM is a personal Android preview. Agents can execute commands and modify files inside your computer. Review important results and control actions through your instructions. Model and computer use are subject to the terms and usage limits of Google Gemini and your sandbox provider."}
+                ? "AetherVM verifies your Google identity. Your agents, conversations, task records and profiles are stored on your configured server and its database. Files and browser sessions stay in your Daytona computer. Your AI provider API key is stored securely on this device and used by the server transiently for model requests; it is not saved in the database. Your selected provider (Google Gemini or Vercel AI Gateway and its model provider) receives the prompts, screenshots and tool results needed to perform your tasks."
+                : "AetherVM is a personal Android preview. Agents can execute commands and modify files inside your computer. Review important results and control actions through your instructions. Model and computer use are subject to the terms and usage limits of your selected AI provider and sandbox provider."}
             </Text>
           </Sheet>
         )}

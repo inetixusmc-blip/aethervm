@@ -20,7 +20,7 @@ def test_greeting_does_not_wake_computer(monkeypatch):
     monkeypatch.setattr(main,'workspace',lambda *a:woke.append(True))
     monkeypatch.setattr(main.genai,'Client',lambda **k:SimpleNamespace(models=SimpleNamespace(generate_content=lambda **k:response(types.Part(text='Hey!'))),close=lambda:None))
     h=token();aid=client.post('/agents',headers=h,json={'name':'Quick greeting'}).json()['id']
-    job=client.post('/tasks',headers=h,json={'agent_id':aid,'prompt':'Hi!','api_key':'test-only-key'}).json()['id']
+    job=client.post('/tasks',headers=h,json={'agent_id':aid,'prompt':'Hi!','api_key':'AIza-test-fixture-not-real'}).json()['id']
     assert wait_done(h,job)['status']=='done' and woke==[]
     assert [m['text'] for m in client.get('/messages?agent_id='+aid,headers=h).json()]==['Hi!','Hey!']
 
@@ -39,7 +39,7 @@ def test_progress_is_saved_before_tool_finishes_without_duplicate_final(monkeypa
     monkeypatch.setattr(main,'workspace',lambda *a:(woke.append(True) or SimpleNamespace(id='progress-box')))
     monkeypatch.setattr(main,'tool',action)
     h=token();aid=client.post('/agents',headers=h,json={'name':'Progress'}).json()['id']
-    job=client.post('/tasks',headers=h,json={'agent_id':aid,'prompt':'Check this','api_key':'test-only-key'}).json()['id']
+    job=client.post('/tasks',headers=h,json={'agent_id':aid,'prompt':'Check this','api_key':'AIza-test-fixture-not-real'}).json()['id']
     try:
         assert entered.wait(3)
         running=client.get('/tasks/'+job,headers=h).json()

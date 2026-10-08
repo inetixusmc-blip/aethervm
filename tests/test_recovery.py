@@ -41,7 +41,7 @@ def test_transient_generation_retries_without_replaying_tool(monkeypatch,code):
     # Make waits immediate while retaining real cancellation behavior.
     monkeypatch.setattr(threading.Event,'wait',lambda self,timeout=None:self.is_set())
     h = token()
-    response = client.post('/tasks',headers=h,json={'prompt':'Run one command','api_key':'test-not-a-real-key'})
+    response = client.post('/tasks',headers=h,json={'prompt':'Run one command','api_key':'AIza-test-fixture-not-real'})
     for _ in range(200):
         result = client.get('/tasks/'+response.json()['id'],headers=h).json()
         if result['status'] != 'running': break
@@ -151,7 +151,7 @@ def test_provider_test_isolates_plain_text_failure(monkeypatch):
     def generate(**kwargs):calls.append(kwargs);raise api_error(503)
     models=SimpleNamespace(list=lambda:[SimpleNamespace(name='models/gemini-3.8-flash',display_name='Flash',supported_actions=['generateContent'])],generate_content=generate)
     monkeypatch.setattr(main.genai,'Client',lambda **kwargs:SimpleNamespace(models=models,close=lambda:None))
-    result=client.post('/provider/test',headers=token(),json={'api_key':'test-not-a-real-key','model':'gemini-3.8-flash'})
+    result=client.post('/provider/test',headers=token(),json={'api_key':'AIza-test-fixture-not-real','model':'gemini-3.8-flash'})
     assert result.status_code==400 and len(calls)==3
     assert calls[0]['config'].tools is None
     assert 'simple text request' in result.json()['detail']
@@ -172,7 +172,7 @@ def test_connection_probe_retries_deadlines_in_both_phases(monkeypatch):
         models=SimpleNamespace(list=lambda:[SimpleNamespace(name='models/gemini-3.8-flash',supported_actions=['generateContent'])],generate_content=generate)
         return SimpleNamespace(models=models,close=lambda:None)
     monkeypatch.setattr(main.genai,'Client',make_client)
-    result=client.post('/provider/test',headers=token(),json={'api_key':'test-not-a-real-key','model':'gemini-3.8-flash'})
+    result=client.post('/provider/test',headers=token(),json={'api_key':'AIza-test-fixture-not-real','model':'gemini-3.8-flash'})
     assert result.status_code==200 and result.json()['model_checked']=='gemini-3.8-flash'
     assert len(calls)==4 and options[0].timeout==60000 and options[0].retry_options.attempts==1
     assert calls[0]['config'].tools is None and calls[2]['config'].tools

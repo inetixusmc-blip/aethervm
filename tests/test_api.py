@@ -43,7 +43,7 @@ def test_agent_loop(monkeypatch):
         def close(self):pass
     monkeypatch.setattr(main,'workspace',lambda u:Box())
     monkeypatch.setattr(main.genai,'Client',Client)
-    h=token(); r=client.post('/tasks',headers=h,json={'prompt':'Say hello','api_key':'test-key-not-real'})
+    h=token(); r=client.post('/tasks',headers=h,json={'prompt':'Say hello','api_key':'AIza-test-fixture-not-real'})
     assert r.status_code==200
     for _ in range(100):
         result=client.get('/tasks/'+r.json()['id'],headers=h).json()
@@ -99,7 +99,7 @@ def test_control_blocks_agent_and_manual_input(monkeypatch):
     h=token()
     assert client.post('/workspace/input',headers=h,json={'action':'click','x':1,'y':1}).status_code==409
     assert client.post('/workspace/control',headers=h,json={'owner':'user'}).status_code==200
-    assert client.post('/tasks',headers=h,json={'prompt':'Hello','api_key':'not-a-real-key'}).status_code==409
+    assert client.post('/tasks',headers=h,json={'prompt':'Hello','api_key':'AIza-test-fixture-not-real'}).status_code==409
     assert client.post('/workspace/control',headers=h,json={'owner':'agent'}).status_code==200
     main.operation_lock(main.scope('local-dev')).acquire()
     try: assert client.post('/workspace/control',headers=h,json={'owner':'user'}).status_code==409
@@ -142,7 +142,7 @@ def test_human_request_is_not_a_completed_task(monkeypatch):
         def close(self):pass
     monkeypatch.setattr(main,'workspace',lambda u:Box())
     monkeypatch.setattr(main.genai,'Client',Client)
-    h=token(); r=client.post('/tasks',headers=h,json={'prompt':'Open my account','api_key':'test-key-not-real'})
+    h=token(); r=client.post('/tasks',headers=h,json={'prompt':'Open my account','api_key':'AIza-test-fixture-not-real'})
     assert r.status_code==200
     for _ in range(100):
         result=client.get('/tasks/'+r.json()['id'],headers=h).json()
@@ -217,7 +217,7 @@ def test_image_tool_response_preserves_signature_and_orders_response_first(monke
     monkeypatch.setattr(main,'workspace',lambda user:Box())
     monkeypatch.setattr(main,'tool',lambda *args:{'image':base64.b64encode(b'png').decode(),'width':64,'height':64})
     monkeypatch.setattr(main.genai,'Client',Client)
-    h=token();r=client.post('/tasks',headers=h,json={'prompt':'See my desktop','api_key':'not-a-real-api-key'})
+    h=token();r=client.post('/tasks',headers=h,json={'prompt':'See my desktop','api_key':'AIza-test-fixture-not-real'})
     for _ in range(100):
         result=client.get('/tasks/'+r.json()['id'],headers=h).json()
         if result['status']!='running':break
@@ -267,15 +267,15 @@ def test_four_workers_isolated_and_api_responsive(monkeypatch):
     jobs=[]
     try:
         for a in agents[:4]:
-            r=client.post('/tasks',headers=h,json={'agent_id':a['id'],'prompt':'Do work','api_key':'test-only-key'})
+            r=client.post('/tasks',headers=h,json={'agent_id':a['id'],'prompt':'Do work','api_key':'AIza-test-fixture-not-real'})
             assert r.status_code==200;jobs.append(r.json()['id'])
         assert all_entered.wait(2), 'All four must execute concurrently'
         start=time.monotonic();assert client.get('/health').status_code==200
         assert client.get('/agents',headers=h).status_code==200
         assert time.monotonic()-start<1
         assert len(set(seen))==4
-        assert client.post('/tasks',headers=h,json={'agent_id':agents[4]['id'],'prompt':'Fifth','api_key':'test-only-key'}).status_code==429
-        assert client.post('/tasks',headers=h,json={'agent_id':agents[1]['id'],'prompt':'Duplicate','api_key':'test-only-key'}).status_code==409
+        assert client.post('/tasks',headers=h,json={'agent_id':agents[4]['id'],'prompt':'Fifth','api_key':'AIza-test-fixture-not-real'}).status_code==429
+        assert client.post('/tasks',headers=h,json={'agent_id':agents[1]['id'],'prompt':'Duplicate','api_key':'AIza-test-fixture-not-real'}).status_code==409
     finally:release.set()
     deadline=time.monotonic()+3
     while time.monotonic()<deadline:
