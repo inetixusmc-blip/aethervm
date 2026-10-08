@@ -1,6 +1,11 @@
 name: Import source and build Android
 on:
   workflow_dispatch:
+    inputs:
+      skip_apk:
+        description: 'Skip rebuilding the APK for backend or QA-only changes'
+        type: boolean
+        default: false
   push:
     paths:
       - '.github/workflows/import.yml'
@@ -81,8 +86,10 @@ jobs:
           git -C /tmp/grokbot-animation checkout 6c27d9640c37e02e1eab0c4f7d98fa01196c66b8
           GROKBOT_SOURCE=/tmp/grokbot-animation/component npm --prefix mobile run compare:character
       - run: chmod +x gradlew && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --max-workers=2
+        if: ${{ inputs.skip_apk != true }}
         working-directory: mobile/android
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.skip_apk != true }}
         with:
           name: AetherVM-preview-apk
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
