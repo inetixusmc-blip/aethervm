@@ -31,7 +31,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A backend mobile deploy qa tests .gitignore README.md DEPLOYMENT.md VALIDATION.md render.yaml
-          git diff --cached --quiet || git commit -m "AetherVM backend 0.4.5: reliable page reads and visible browser controls"
+          git diff --cached --quiet || git commit -m "AetherVM backend 0.5.0: E2B Ubuntu desktops and persistent pause/resume"
           git push
       - uses: actions/setup-node@v4
         with:
@@ -89,21 +89,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Read Ubuntu files from source archive
+      - name: Read E2B Ubuntu files from source archive
         run: |
           python - <<'PYTHON'
           import zipfile
           from pathlib import Path
           with zipfile.ZipFile('AetherVM-source.zip') as z:
-              for name in ['Dockerfile.ubuntu','desktop_theme.py','desktop_smoke.py','browser_tools.py','browser_smoke.py']:
+              for name in ['Dockerfile.e2b','desktop_theme.py','desktop_smoke.py','browser_tools.py','browser_smoke.py']:
                   p=Path('backend')/name
                   p.write_bytes(z.read('aethervm/backend/'+name))
           PYTHON
-      - name: Check Ubuntu desktop image
+      - name: Check E2B Ubuntu desktop image
         run: |
-          docker build --progress=plain -f backend/Dockerfile.ubuntu -t aethervm-ubuntu-check backend
-          docker run --name aethervm-desktop-check -d aethervm-ubuntu-check
-          docker exec aethervm-desktop-check bash -lc '. /etc/os-release; test "$ID:$VERSION_ID" = "ubuntu:24.04"; command -v Xvfb; command -v xfce4-session; command -v x11vnc; command -v google-chrome'
+          docker build --progress=plain -f backend/Dockerfile.e2b -t aethervm-ubuntu-check backend
+          docker run --name aethervm-desktop-check -d aethervm-ubuntu-check sleep infinity
+          docker exec aethervm-desktop-check bash -lc '. /etc/os-release; test "$ID:$VERSION_ID" = "ubuntu:24.04"; command -v Xvfb; command -v xfce4-session; command -v x11vnc; /opt/aethervm-venv/bin/python3 -c "import playwright"'
           docker exec aethervm-desktop-check bash -lc 'Xvfb :0 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &'
           docker exec aethervm-desktop-check bash -lc 'dbus-run-session -- xfce4-session >/tmp/xfce.log 2>&1 &'
           docker cp backend/desktop_theme.py aethervm-desktop-check:/tmp/desktop_theme.py
