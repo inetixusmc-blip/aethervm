@@ -26,5 +26,6 @@ assert(await p.evaluate(()=>window.events.some(e=>e.kind==='input'&&e.action==='
 await p.evaluate(()=>window.__desktopApply({kind:'trackpad',enabled:true}));await p.evaluate(()=>window.__desktopApply({kind:'recenter'}));assert(await p.evaluate(()=>window.events.some(e=>e.action==='move'&&e.x===640&&e.y===400)));
 await p.screenshot({path:'live-stream-390.png'});
 // Wrong credentials never display the computer.
-await p.evaluate(config=>window.__desktopApply({kind:'configure',config:{...config,password:'invalid!'}}),config);await p.waitForFunction(()=>window.events.some(e=>e.kind==='error'),{},{timeout:15000});
+await p.evaluate(config=>{window.events=[];window.__desktopApply({kind:'configure',config})},config);await p.waitForFunction(()=>window.events.some(e=>e.kind==='connected'),{},{timeout:15000});assert(!(await p.evaluate(()=>window.events.some(e=>e.kind==='error'))),'Reconnect does not report a stale disconnect');
+await p.evaluate(config=>{window.events=[];window.__desktopApply({kind:'configure',config:{...config,password:'invalid!'}})},config);await p.waitForFunction(()=>window.events.some(e=>e.kind==='error'),{},{timeout:15000});assert(!(await p.evaluate(()=>window.events.some(e=>e.kind==='connected'))),'Wrong credentials never connect');
 assert.deepEqual(errors,[]);await browser.close();server.close();console.log('Live stream checks passed: authenticated RFB, continuous frames, blue cursor, click pulse, direct input, trackpad, wrong password rejected.');

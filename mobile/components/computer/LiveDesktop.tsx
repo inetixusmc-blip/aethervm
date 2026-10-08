@@ -13,7 +13,7 @@ export default function LiveDesktop({stream,api,visible,trackpad,animations,comm
  const source=useMemo(()=>({html:desktopHTML}),[]);
  const apply=(payload:any)=>{if(Platform.OS==='web')frame.current?.contentWindow?.postMessage({desktopCommand:payload},'*');else native.current?.injectJavaScript(`window.__desktopApply(${JSON.stringify(payload)});true;`)};
  useEffect(()=>()=>{mounted.current=false;apply({kind:'close'})},[]);
- useEffect(()=>{if(ready&&visible){setLive(false);apply({kind:'configure',config:{...stream,reduced:!animations}})}else if(ready)apply({kind:'close'})},[ready,visible,stream]);
+ useEffect(()=>{if(ready&&visible){setLive(false);apply({kind:'configure',config:{...stream,reduced:!animations}})}else if(ready)apply({kind:'close'})},[ready,visible,stream,animations]);
  useEffect(()=>{if(ready)apply({kind:'trackpad',enabled:trackpad})},[ready,trackpad]);
  useEffect(()=>{if(ready&&command)apply(command)},[ready,command]);
  useEffect(()=>{
