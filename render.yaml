@@ -11,10 +11,10 @@ services:
       - key: GOOGLE_WEB_CLIENT_ID
         value: 636307355753-srlt103so2e3d1encolqo0nq1tjrtk2v.apps.googleusercontent.com
       - key: SANDBOX_PROVIDER
-        value: daytona
-      - key: DAYTONA_API_URL
-        value: https://app.daytona.io/api
-      - key: DAYTONA_API_KEY
+        value: e2b
+      - key: E2B_TEMPLATE
+        value: aethervm-ubuntu-24-04-e2b-v1
+      - key: E2B_API_KEY
         sync: false
       - key: TURSO_DATABASE_URL
         sync: false

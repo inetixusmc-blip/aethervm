@@ -9,7 +9,7 @@ from pathlib import Path
 from browser_tools import browser_command
 
 def run_action(action,args):
-    # Match DaytonaSandbox.execute: login shell, then its bounded output channel.
+    # Match the cloud sandbox execute: login shell, then its bounded output channel.
     command='cd /workspace && '+browser_command(action,args)
     result=subprocess.run(['bash','-lc',command],capture_output=True,text=True,timeout=60)
     assert result.returncode==0, (action,result.stderr[-300:])

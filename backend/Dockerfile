@@ -3,6 +3,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
-COPY Dockerfile.ubuntu ./
+COPY Dockerfile.ubuntu Dockerfile.e2b ./
 ENV PYTHONUNBUFFERED=1
 CMD ["sh", "-c", "python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

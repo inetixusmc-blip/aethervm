@@ -15,9 +15,9 @@ been verified on this instance. The app continues using the existing HTTPS API.
    client. Apply system updates and enable Docker/nginx at boot.
 3. Clone this repository into `/opt/aethervm`. Create `/etc/aethervm` mode 700.
    Copy the existing production configuration into `/etc/aethervm/backend.env`
-   mode 600 without printing it. Required private configuration: Daytona key,
+   mode 600 without printing it. Required private configuration: E2B key,
    Turso URL/token, Google Web client ID and the existing account allowlist.
-   Keep `SANDBOX_PROVIDER=daytona`; sandbox compute stays on Daytona.
+   Set `SANDBOX_PROVIDER=e2b`; sandbox compute stays on E2B. Follow `backend/DESKTOP.md` for the hidden-key configuration command, template build and live check.
    Do not enable `DEV_AUTH` in production. No Gemini key belongs in this file.
 4. Use the owner-controlled API hostname and point DNS at EC2. Restrict SSH
    ingress to the administrator's current IP. Permit application traffic on
@@ -36,7 +36,7 @@ been verified on this instance. The app continues using the existing HTTPS API.
    `/health`. Verify `https://<hostname>/health` from outside EC2 with ordinary
    certificate validation. Confirm Google/session, profiles, tasks, provider,
    live screen/control, uploads/downloads, memory, skills, cancellation and logout.
-8. Run four real Daytona/Gemini jobs at once, including one failure, while
+8. Run four real E2B/Gemini jobs at once, including one failure, while
    polling health. Record API latency, process CPU/RSS, host memory and
    `docker stats`; test independent screen/control/file ownership. The local
    mock concurrency test is evidence of scheduling/isolation, not AWS capacity.
@@ -56,3 +56,5 @@ restore as interrupted rather than silently restarting work.
 Configuration is in `/etc/aethervm/backend.env`; logs use nginx's access/error
 logs and bounded Docker logs. Neither PEM nor environment credentials are
 included in source archives or Android builds.
+
+For migration from Daytona, follow [E2B Ubuntu desktops](../../backend/DESKTOP.md). No new APK is required.

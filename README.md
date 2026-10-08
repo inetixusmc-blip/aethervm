@@ -2,7 +2,7 @@
 
 Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gemini and Vercel AI Gateway use real function calls to execute commands, write/read files, and browse with Playwright in isolated Linux sandboxes. No simulated task results.
 
-Backend 0.4.5 fixes browser startup and page reading; the Android 0.4.4 APK remains compatible. The visible browser uses the installed Playwright Chromium with a persistent per-computer profile, returns rendered page text/links and fresh controls, and supports reading, clicking and filling search fields. Headless reading waits for rendering and reports empty pages, HTTP/network/TLS errors and human verification explicitly. TLS checks remain enabled. The worker stops certificate failures immediately and repeated browser-environment failures after one alternative attempt. It asks for user review of verification pages rather than cycling through browser and curl calls. This update needs only the API rebuild, not a new Daytona snapshot or computer migration.
+Backend 0.5.0 switches the default desktop provider to **E2B Desktop**. Each assistant receives its own verified Ubuntu 24.04 computer with screenshots, keyboard/mouse input, files, terminal and structured browser controls. Inactive computers pause instead of being deleted, preserving their files. Existing Daytona computers and their database IDs remain available for recovery; old files are imported only by an explicit migration command. The 0.4.4 Android APK stays compatible. See [E2B setup and file recovery](backend/DESKTOP.md).
 
 ## Status
 
@@ -11,15 +11,15 @@ The 0.4.4 preview adds automatic Gemini/Vercel AI Gateway key detection in Setti
 The 0.4.3 preview uses compact conversation bubbles and an intrinsic-width agent header. Tap or hold a message to reveal copy/edit actions. The computer is shown only when explicitly opened. Natural task updates are separate persisted messages; the small source-animated worker follows the latest message with a muted action label. Normal conversation avoids VM startup. Real work starts the computer on demand, prefers direct file/shell/page-reading tools where suitable, and receives screenshots in the same response as desktop actions. Gemini generation timeouts remain 180 seconds for tasks and 60 seconds for connection probes, with bounded transient retries. Native/provider latency is not benchmarked by fixture tests.
 
 
-The 0.4.2 preview has a clean conversation list, a left account sidebar, dark rounded chat bubbles, message copy and latest-message edit/resend, removable/restorable assistants and an immediate curated Gemini model picker. Activity navigation is removed. Original character states remain available; small identity avatars keep their body and eyes visible while occasional/tap bounces use the source engine. The default mobile API is the user's AWS endpoint `https://16.16.124.235`; saved custom server choices are retained and the old Render default migrates to AWS. Newly provisioned Daytona computers require the Ubuntu 24.04 snapshot; older computers migrate `/workspace` on first use while retaining the original sandbox for recovery. Run `sudo bash /opt/aethervm/deploy/aws/update.sh` to deploy and build the Ubuntu snapshot. The OS image and live provider connection still need verification on that server. See `backend/DESKTOP.md` and `VALIDATION.md`.
+The 0.4.2 preview has a clean conversation list, a left account sidebar, dark rounded chat bubbles, message copy and latest-message edit/resend, removable/restorable assistants and an immediate curated Gemini model picker. Activity navigation is removed. Original character states remain available; small identity avatars keep their body and eyes visible while occasional/tap bounces use the source engine. The default mobile API is the user's AWS endpoint `https://16.16.124.235`; saved custom server choices are retained and the old Render default migrates to AWS. The current backend uses E2B with a custom Ubuntu 24.04 template. Run the E2B configuration and deployment steps in `backend/DESKTOP.md`; the cloud connection still needs verification on the server. See `backend/DESKTOP.md` and `VALIDATION.md`.
 
-Google profile photos, five-step onboarding and the source character engine are retained. Body shape/material remain independent of task state. Each assistant has its own computer, task lock and manual-control lease; up to four tasks can run concurrently. The Ubuntu image passed the CI desktop smoke check; live Daytona migration and native Android integration still need verification.
+Google profile photos, five-step onboarding and the source character engine are retained. Body shape/material remain independent of task state. Each assistant has its own computer, task lock and manual-control lease; up to four tasks can run concurrently. The Ubuntu image passed the CI desktop smoke check; live E2B provisioning and native Android integration still need verification.
 
-This remains a personal preview. Agents own separate Daytona computers. Scheduled automation and automatic multi-agent coordination are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
+This remains a personal preview. Agents own separate E2B computers. Scheduled automation and automatic multi-agent coordination are not implemented. See `VALIDATION.md` for checks and remaining live-device verification.
 
 ## 1. Configure Google login
 
-Create a Google Cloud project, configure the OAuth consent screen and add yourself as a test user if the app is in testing. Create a **Web OAuth client** (its ID is the server audience), and an **Android OAuth client** with package `com.aethervm.app` and the SHA-1 fingerprint of your APK signing certificate. Set the same Web client ID in backend `GOOGLE_WEB_CLIENT_ID` and mobile `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`. The native Google sign-in module requires a development build or APK; it does not work in Expo Go. Do not put OAuth secrets or Daytona keys in `EXPO_PUBLIC_*` variables.
+Create a Google Cloud project, configure the OAuth consent screen and add yourself as a test user if the app is in testing. Create a **Web OAuth client** (its ID is the server audience), and an **Android OAuth client** with package `com.aethervm.app` and the SHA-1 fingerprint of your APK signing certificate. Set the same Web client ID in backend `GOOGLE_WEB_CLIENT_ID` and mobile `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`. The native Google sign-in module requires a development build or APK; it does not work in Expo Go. Do not put OAuth secrets or desktop-provider keys in `EXPO_PUBLIC_*` variables.
 
 ## 2. Start the backend
 
@@ -38,11 +38,15 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 Use one API process: the task executor and cancellation flags are process-local. SQLite or configured Turso libSQL persists accounts' workspace mappings, profiles, memory, skills, messages and task traces. Restarted jobs become interrupted. Put the service behind HTTPS (a reverse proxy or a tunnel); Android app intentionally requires an HTTPS URL. Keep the SQLite file private and backed up. Google sessions expire after seven days; sign out revokes the current session. AI provider keys are kept in Android SecureStore and transient backend memory, not SQLite. Prompts, tool arguments and command output are saved in SQLite, so do not place secrets in task text.
 
-### Daytona (default)
+### E2B Desktop (default)
 
-Create an account at https://app.daytona.io and generate an API key. Set `DAYTONA_API_KEY`, `DAYTONA_API_URL=https://app.daytona.io/api`, `SANDBOX_PROVIDER=daytona` in backend `.env`. Each agent receives its own sandbox, with a 5-minute idle auto-stop. Stopped sandbox disk may still incur charges. Use the app's Put computer to sleep button to stop compute after a task. Run `python ubuntu_snapshot.py` in the configured backend to build `aethervm-ubuntu-24-04-v1`, based on Ubuntu 24.04 with XFCE/VNC, Yaru styling and Chrome. A custom `DAYTONA_SNAPSHOT` must also be Ubuntu 24.04; an OS preflight prevents Debian fallback. The separate headless browse tool may require Playwright and Chromium installation. Provider snapshot permissions determine whether system packages can be installed.
+Set server-only `E2B_API_KEY`, `SANDBOX_PROVIDER=e2b`, and `E2B_TEMPLATE=aethervm-ubuntu-24-04-e2b-v1`. Build the template using `python e2b_template.py`. Do not select the public Ubuntu 22.04 desktop template; the OS preflight requires Ubuntu 24.04. The template includes the actual desktop and Playwright browser dependencies. Run `python e2b_check.py` for live verification. The default lease is 600 seconds and expires into a persistent pause; active command/file use renews it. Manual Sleep pauses the VM, and subsequent tasks or Start resume it. Screen polling does not wake sleeping computers.
 
-Daytona manages independent sandboxes; this app does not claim that Daytona splits a single rented VM into unlimited free workspaces.
+The AWS configuration command accepts the key through a hidden prompt. Existing Daytona IDs are retained, and optional `python e2b_migrate.py` imports `/workspace` without overwriting new files. See `backend/DESKTOP.md` for the exact deployment steps, limits and recovery paths.
+
+### Legacy Daytona recovery
+
+The SDK remains available for old-file import and optional provider rollback. Retain `DAYTONA_API_KEY` and the original API URL until old files have been reviewed. New E2B computers never use Daytona snapshots. No original VM is automatically deleted by the provider switch.
 
 ### Self-hosted Docker (no cloud subscription)
 
@@ -84,26 +88,26 @@ EAS needs your Expo account and available build quota. When Google Android OAuth
 - Create and edit named agents with roles, instructions, avatars and persistent memory. Each agent has separate conversations and task history; each agent owns its computer.
 - Google identity verified on the server; ownership checked on every private endpoint.
 - Markdown responses, copyable code, rounded conversation bubbles, copyable user/assistant messages, editable last turns, and explicit waiting/error/cancelled states.
-- Daytona desktop screenshots, visible browser launch, mouse/keyboard actions, and exclusive manual/agent control. A disconnected manual-control lease expires automatically.
+- E2B desktop screenshots, visible browser controls, mouse/keyboard actions, and exclusive manual/agent control. A disconnected manual-control lease expires automatically.
 - Navigate workspace folders, preview and export files, and attach files up to 4 MB. Bounded terminal commands expose real output and exit status.
 - Gemini or Vercel AI Gateway key stored in Android SecureStore, connection testing and available-model selection. Keys remain transient on the backend, outside the database.
 - Saved skills become agent instructions. Scheduled runs are clearly unavailable in this version.
 - Restores server conversations and tasks after reopening the app. Free-host cold starts use a longer request timeout with readable errors.
 - Stop requests take effect after the current bounded command or model request. Cancellation does not undo completed actions or necessarily stop background processes.
-- Docker provides shell/files; the desktop viewer requires the Daytona provider.
+- Docker provides shell/files; the desktop viewer uses E2B Desktop (or the legacy Daytona provider).
 
 ## Free hosting research — checked 5 October 2026
 
 | Option | Free provision | Practical limit |
 | --- | --- | --- |
-| Daytona | $200 trial compute credits; no card required for trial | Metered usage after credits, not permanently free |
+| E2B | $100 one-time usage credit; no card required | Metered compute; Hobby sessions up to one hour |
 | Oracle Cloud Always Free | Eligible compute instances; shape/resource limits apply | Regional capacity can be unavailable; idle instances can be reclaimed; account verification needed |
 | Google Cloud Free Tier | One e2-micro equivalent within eligible regions, 30 GB standard disk and limited outbound data | Very small for Chromium or multiple workspaces; billing account and strict eligible quotas; additional network resources can cost |
 | Your own Linux machine + Docker | No cloud hosting fee | Your machine must stay on; electricity, internet and hardware still apply |
 
-For a permanent no-subscription personal setup, use your own Linux machine. For a cloud trial, Daytona is already integrated. No provider guarantees unlimited always-on Linux computers completely free. An Oracle free VM can host the Docker provider if you obtain capacity and meet the account requirements.
+For a permanent no-subscription personal setup, use your own Linux machine. For a cloud trial, E2B Desktop is integrated. No provider guarantees unlimited always-on Linux computers completely free. An Oracle free VM can host the Docker provider if you obtain capacity and meet the account requirements.
 
-Sources: https://www.daytona.io/pricing · https://www.daytona.io/docs/billing · https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm · https://cloud.google.com/free · https://docs.cloud.google.com/free/docs/free-cloud-features
+Sources: https://e2b.dev/pricing · https://docs.e2b.dev/sandbox/persistence · https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm · https://cloud.google.com/free · https://docs.cloud.google.com/free/docs/free-cloud-features
 
 ## Checks
 
@@ -138,5 +142,5 @@ curl --fail https://16.16.124.235/health
 Health should report `version: 0.4.4` and `ai_providers: [gemini, vercel]`.
 No Gateway environment variable or new inbound port is required: paste the key
 in the app. Model requests use outbound HTTPS to `ai-gateway.vercel.sh`.
-This provider update does not require rebuilding or migrating Daytona snapshots.
+This provider update builds an E2B Ubuntu template; Daytona snapshots are used only for legacy recovery.
 Gateway API reference: https://vercel.com/docs/ai-gateway/openai-compat/rest-api

@@ -175,10 +175,9 @@ def browser_command(action, args):
     source=Path(__file__).read_text()
     source+='\nprint(encode_result(run_action('+repr(action)+', json.loads('+repr(json.dumps(args))+'))))\n'
     bootstrap="""import os,sys
-python='/home/daytona/.venv/bin/python3'
-if not os.path.isfile(python): python=sys.executable
-cache='/home/daytona/.cache/ms-playwright'
-if os.path.isdir(cache): os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH',cache)
+python=next((p for p in ['/opt/aethervm-venv/bin/python3','/home/daytona/.venv/bin/python3'] if os.path.isfile(p)),sys.executable)
+cache=next((p for p in ['/opt/aethervm-browsers','/home/daytona/.cache/ms-playwright'] if os.path.isdir(p)),'')
+if cache: os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH',cache)
 os.execv(python,[python,'-c',SOURCE])
 """.replace('SOURCE',repr(source))
     return 'python3 -c '+shlex.quote(bootstrap)

@@ -1,60 +1,91 @@
-# Ubuntu desktops and connection recovery
+# E2B Ubuntu desktops
 
-AetherVM now requires Ubuntu 24.04 LTS for active agent computers. It never uses
-Daytona's default Debian snapshot for new computers. `Dockerfile.ubuntu` includes
-Daytona's documented XFCE/Xvfb/x11vnc/noVNC/D-Bus stack, official Ubuntu Yaru and
-Arc themes, Chrome from Google's official Debian package, Python, Node and
-Playwright. This is an Ubuntu XFCE desktop rather than the stock GNOME session.
-The OS gate checks `/etc/os-release`, independent of appearance or provider labels.
+Backend 0.5.0 defaults to E2B Desktop. Each assistant owns a separate E2B computer,
+with Ubuntu 24.04 verified from `/etc/os-release`. The public `desktop` template
+uses Ubuntu 22.04, so the app builds its own `aethervm-ubuntu-24-04-e2b-v1` template
+from `Dockerfile.e2b`. It includes XFCE, Ubuntu Yaru/Arc styling, a 1280x800 display,
+Playwright Chromium, Python, Node, terminal and file tools. This is Ubuntu with
+XFCE, not the stock GNOME desktop.
 
-The account's Daytona snapshot is built once with `python ubuntu_snapshot.py`.
-The AWS update script invokes this after deploying the API; the first image build
-can take several minutes. Snapshot build failures do not enable Debian fallback.
-`DAYTONA_SNAPSHOT` can override the image only with another Ubuntu 24.04 snapshot.
+E2B runs commands and desktop tools; the AWS API remains the coordinator. AI keys
+still belong to Gemini or Vercel AI Gateway. An E2B key is a separate server-only
+infrastructure credential, never a mobile `EXPO_PUBLIC_*` setting.
 
-The AWS update migrates and checks every existing active assistant computer;
-computers created later use Ubuntu directly. Non-Ubuntu computers also migrate
-on first use if an administrator uses a different deployment path. A compressed backup of all
-`/workspace` contents is hash-verified before extraction in a new Ubuntu computer.
-The API switches the mapping only after extraction succeeds and stores the old
-sandbox ID in `previous_workspaces`. The original sandbox stops and remains in
-Daytona for recovery; it is not deleted. Installed system packages and files
-outside `/workspace` stay on that old computer. The automatic transfer is bounded
-to 64 MiB compressed; larger or unsafe archives leave the original mapping intact
-and require a manual migration. Do not delete old sandboxes until their files have
-been reviewed. Stopped storage may count toward Daytona quota.
+## AWS setup
 
-Desktop startup checks the provider's running display before starting it. Shell
-initialization creates a writable `/workspace` before executing commands. Polling
-retains the last frame on transient failure, and a failed screen can reconnect a
-computer that auto-stopped. A recoverable assistant removal hides it, stops its
-computer when possible, and keeps its messages/files for the sidebar Restore flow.
+Create an E2B account and obtain an API key from https://e2b.dev.
+Finish current tasks, then run these commands one at a time in SSH:
 
-## Apply to AWS
+```bash
+sudo git -C /opt/aethervm pull --ff-only
+```
 
-Let current tasks finish, then use the existing SSH terminal:
+```bash
+sudo python3 /opt/aethervm/deploy/aws/configure-e2b.py
+```
+
+The second command accepts the E2B key through a hidden prompt, preserves the
+existing Google/database configuration and optional Daytona recovery credentials,
+and writes `/etc/aethervm/backend.env` with mode 600. No key appears in shell history.
 
 ```bash
 sudo bash /opt/aethervm/deploy/aws/update.sh
+```
+
+This rebuilds the API and builds the E2B Ubuntu template once per account. It does
+not run Daytona snapshot migrations when E2B is selected. The first build takes
+several minutes. To check actual E2B operation:
+
+```bash
+sudo docker compose -f /opt/aethervm/deploy/aws/compose.yml exec -T api python e2b_check.py
+```
+
+The check creates one disposable VM and tests Ubuntu, shell, file access, screenshots,
+visible HTTPS browsing, pause/resume and preserved files; it then removes only that
+VM. It consumes E2B compute credits. Existing assistant files are never used by this check.
+
+```bash
 curl --fail https://16.16.124.235/health
 ```
 
-Health should include `"version":"0.4.2"`. The update command builds the Ubuntu
-snapshot in the same Daytona organization and credentials as the API. Reopen the
-computer; the initial migration can take longer than normal startup. Its original
-files are preserved if migration fails. Install APK 0.4.2 for the UI and default
-AWS address. A custom server URL remains unchanged.
+Expect `version: 0.5.0`, `provider: e2b`, `browser_tools_version: 2`. The existing
+0.4.4 Android APK works with these endpoints; installing a new APK is not required.
 
-Gemini model discovery lists only supported agent text/image models and does not
-make an inference request. The optional connection test isolates model listing,
-plain text generation and generation with computer tools. Terminal commands do
-not use Gemini. Provider failures show safe error categories without secret URLs
-or API keys. Transient Gemini requests retry up to three times; executed computer
-actions are never automatically repeated. Editing/resending the latest user
-message replaces the last conversational turn and starts a new task; it does not
-undo previously completed computer actions.
+## Persistence and provider switching
 
-Live AWS SSH is unreachable from the build workspace. Docker image/UI/SDK unit
-checks do not establish that the user's deployed Daytona key or native Android
-WebView works. Verify a terminal command, desktop reconnect and a Gemini task
-after applying the update on AWS.
+E2B computers use `lifecycle.on_timeout=pause`, never the default destructive
+`kill` timeout. The default runtime lease is 600 seconds; active commands renew it.
+The Sleep button pauses the VM, preserving files and memory. Explicit task, Start,
+terminal and file requests resume it. Screen/status polling does not resume paused
+VMs or repeatedly extend the lease. After an API restart, one SDK reconnect may
+extend an already running VM by at most a second. Hobby's continuous-session limit
+still applies; provider limits and availability are not changed by the app.
+
+New E2B IDs are stored with an `e2b:` prefix. Existing unprefixed Daytona records
+are recognized as legacy and never sent to E2B. Switching providers creates a
+fresh E2B computer on first use; it does not silently copy old files. The database
+retains the original computer ID in `previous_workspaces`, and the old VM is stopped
+when possible, never deleted. A failed E2B creation leaves the old mapping intact.
+Switching back reuses the most recently preserved computer for that provider.
+Missing or killed E2B IDs cause an explicit error; a blank replacement is not
+silently created over a computer that may contain important files.
+
+To import the old `/workspace` after opening each assistant's new E2B computer:
+
+```bash
+sudo docker compose -f /opt/aethervm/deploy/aws/compose.yml exec -T api python e2b_migrate.py
+```
+
+Retain a valid Daytona key for this optional operation. It restores hash-verified,
+safely extracted archives into `/workspace/imports/daytona-<source-hash>`; it never
+replaces existing files or an existing import directory. The automated transfer
+limit is 64 MiB compressed per workspace. System packages and files outside
+`/workspace` stay in the old VM. Removed or currently working assistants are skipped.
+Do not delete old Daytona computers until the files have been reviewed.
+
+## Verification limits
+
+SDK contract/unit tests and a disposable Ubuntu Docker smoke run validate the
+adapter and image without cloud credentials. Only `e2b_check.py` on the configured
+server establishes that the account's key, cloud template build, credits and live
+provider work. Public-site bot checks may still require manual user takeover.

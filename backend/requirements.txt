@@ -3,6 +3,8 @@ uvicorn[standard]==0.54.0
 google-auth==2.59.1
 google-genai==2.28.0
 daytona==0.220.0
+e2b==2.53.1
+e2b-desktop==2.6.1
 python-dotenv==1.2.4
 requests==2.34.2
 libsql==0.1.11

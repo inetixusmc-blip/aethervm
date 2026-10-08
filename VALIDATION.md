@@ -1,3 +1,12 @@
+## Backend 0.5.0 — E2B Desktop
+
+- 100 backend tests pass locally, including the pinned E2B SDK signatures, custom Ubuntu 24.04 template definition, command failure output, file/screenshot/input adapters, pause/resume, read-only polling, old-provider ID separation, preservation on failed provisioning, rollback reuse, and bounded non-overwriting file imports.
+- Backend modules compile; E2B template parses through the pinned SDK.
+- CI builds the exact E2B Ubuntu image and runs the real display/browser smoke checks. Record the final run outcome before claiming success.
+- Existing Android 0.4.4 endpoints remain compatible; this change does not modify the character engine or chat layout.
+- Live E2B creation, credits, pause/resume and cloud networking are not verified without a server E2B key. `python e2b_check.py` performs that check in one disposable VM after deployment.
+- Provider switching preserves old Daytona VMs and IDs. Their files do not automatically appear in the fresh E2B desktop; `e2b_migrate.py` explicitly imports them into a separate folder.
+
 # AetherVM 0.4.3 validation — 8 October 2026
 
 ## Backend 0.4.5 browsing fix

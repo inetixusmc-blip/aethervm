@@ -140,7 +140,7 @@ def test_manual_terminal_failure_is_safe_and_not_repeated(monkeypatch):
     assert client.post('/workspace/control',headers=h,json={'owner':'user'}).status_code==200
     result=client.post('/workspace/terminal',headers=h,json={'command':'echo once'})
     assert result.status_code==503 and calls==['echo once']
-    assert 'Daytona' in result.json()['detail'] and 'private-test-key' not in str(result.json())
+    assert 'Ubuntu' in result.json()['detail'] and 'private-test-key' not in str(result.json())
     client.post('/workspace/control',headers=h,json={'owner':'agent'})
 
 

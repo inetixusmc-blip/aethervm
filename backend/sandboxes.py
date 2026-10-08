@@ -61,8 +61,31 @@ class DaytonaSandbox:
     def stop(self): self.client.stop(self.box)
     def delete(self): self.client.delete(self.box)
 
+def provider():
+    value=os.getenv('SANDBOX_PROVIDER','e2b').lower()
+    if value not in ('e2b','daytona','docker'): raise RuntimeError('Unsupported sandbox provider')
+    return value
+
+def record_provider(sandbox_id):
+    if sandbox_id.startswith('e2b:'): return 'e2b'
+    if sandbox_id.startswith('aether-'): return 'docker'
+    # All pre-E2B database records are Daytona IDs.
+    return 'daytona'
+
 def get_sandbox(user, existing=None):
-    return verify_ubuntu((DaytonaSandbox if os.getenv('SANDBOX_PROVIDER','daytona') == 'daytona' else DockerSandbox)(user,existing))
+    selected=provider()
+    if existing and record_provider(existing)!=selected:
+        raise RuntimeError('Computer belongs to a different provider')
+    if selected=='e2b':
+        from e2b_provider import E2BSandbox
+        box=E2BSandbox(user,existing)
+        try: return verify_ubuntu(box)
+        except Exception:
+            if not existing:
+                try: box.stop()
+                except Exception: pass
+            raise
+    return verify_ubuntu((DaytonaSandbox if selected=='daytona' else DockerSandbox)(user,existing))
 
 def migrate_ubuntu(user,old):
     """Copy workspace to Ubuntu; retain the original machine as a recovery source."""
@@ -174,7 +197,10 @@ def tool(box, name, args):
     raise ValueError('Unknown tool')
 
 def sandbox_state(sandbox_id):
-    if os.getenv('SANDBOX_PROVIDER','daytona')=='daytona':
+    if record_provider(sandbox_id)=='e2b':
+        from e2b_provider import state
+        return 'started' if state(sandbox_id.removeprefix('e2b:'))=='running' else 'stopped'
+    if record_provider(sandbox_id)=='daytona':
         from daytona import Daytona
         return str(Daytona().get(sandbox_id).state).lower().split('.')[-1]
     r=subprocess.run(['docker','inspect','--format','{{.State.Running}}',sandbox_id],capture_output=True,text=True)
@@ -182,7 +208,10 @@ def sandbox_state(sandbox_id):
 
 def existing_sandbox(sandbox_id):
     # Read-only access: unlike provisioning, screen polling never restarts a stopped computer.
-    if os.getenv('SANDBOX_PROVIDER','daytona')!='daytona': raise RuntimeError('Desktop unavailable')
+    if record_provider(sandbox_id)=='e2b':
+        from e2b_provider import E2BSandbox
+        return E2BSandbox('',sandbox_id,resume=False)
+    if record_provider(sandbox_id)=='docker': raise RuntimeError('Desktop unavailable')
     from daytona import Daytona
     box=object.__new__(DaytonaSandbox)
     box.client=Daytona(); box.box=box.client.get(sandbox_id); box.id=sandbox_id
