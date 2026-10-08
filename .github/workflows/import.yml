@@ -31,7 +31,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A backend mobile deploy qa tests .gitignore README.md DEPLOYMENT.md VALIDATION.md render.yaml
-          git diff --cached --quiet || git commit -m "AetherVM backend 0.5.0: E2B Ubuntu desktops and persistent pause/resume"
+          git diff --cached --quiet || git commit -m "AetherVM 0.5.1: live desktop, direct touch controls, keyboard and deletion"
           git push
       - uses: actions/setup-node@v4
         with:
@@ -48,6 +48,8 @@ jobs:
       - run: npm ci
         working-directory: mobile
       - run: cp .env.example .env
+        working-directory: mobile
+      - run: npm run build:desktop
         working-directory: mobile
       - run: npm run typecheck
         working-directory: mobile
@@ -95,14 +97,14 @@ jobs:
           import zipfile
           from pathlib import Path
           with zipfile.ZipFile('AetherVM-source.zip') as z:
-              for name in ['Dockerfile.e2b','desktop_theme.py','desktop_smoke.py','browser_tools.py','browser_smoke.py']:
+              for name in ['Dockerfile.e2b','desktop_theme.py','desktop_smoke.py','browser_tools.py','browser_smoke.py','e2b_provider.py','stream_smoke.py']:
                   p=Path('backend')/name
                   p.write_bytes(z.read('aethervm/backend/'+name))
           PYTHON
       - name: Check E2B Ubuntu desktop image
         run: |
           docker build --progress=plain -f backend/Dockerfile.e2b -t aethervm-ubuntu-check backend
-          docker run --name aethervm-desktop-check -d aethervm-ubuntu-check sleep infinity
+          docker run --name aethervm-desktop-check -p 127.0.0.1:6080:6080 -d aethervm-ubuntu-check sleep infinity
           docker exec aethervm-desktop-check bash -lc '. /etc/os-release; test "$ID:$VERSION_ID" = "ubuntu:24.04"; command -v Xvfb; command -v xfce4-session; command -v x11vnc; /opt/aethervm-venv/bin/python3 -c "import playwright"'
           docker exec aethervm-desktop-check bash -lc 'Xvfb :0 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &'
           docker exec aethervm-desktop-check bash -lc 'dbus-run-session -- xfce4-session >/tmp/xfce.log 2>&1 &'
@@ -117,6 +119,23 @@ jobs:
           docker cp aethervm-desktop-check:/workspace/browser-checks.json browser-checks.json
           docker cp aethervm-desktop-check:/workspace/browser-desktop.png browser-desktop.png
           docker cp aethervm-desktop-check:/workspace/ubuntu-desktop.png ubuntu-desktop.png
+      - name: Check continuous authenticated desktop stream
+        run: |
+          docker cp backend/e2b_provider.py aethervm-desktop-check:/tmp/e2b_provider.py
+          docker cp backend/stream_smoke.py aethervm-desktop-check:/tmp/stream_smoke.py
+          docker exec aethervm-desktop-check python3 /tmp/stream_smoke.py
+          docker cp aethervm-desktop-check:/workspace/stream-auth.json stream-auth.json
+          python - <<'PYTHON'
+          import zipfile
+          from pathlib import Path
+          with zipfile.ZipFile('AetherVM-source.zip') as z:
+              for name in ['qa/check-live-stream.mjs','mobile/components/computer/live.generated.ts']:
+                  p=Path(name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(z.read('aethervm/'+name))
+          PYTHON
+          npm install --prefix /tmp/aethervm-stream-checks playwright@1.61.1
+          /tmp/aethervm-stream-checks/node_modules/.bin/playwright install --with-deps chromium
+          PLAYWRIGHT_MODULE=/tmp/aethervm-stream-checks/node_modules/playwright/index.mjs node qa/check-live-stream.mjs
+          rm -f stream-auth.json
       - uses: actions/upload-artifact@v4
         with:
           name: AetherVM-Ubuntu-desktop
@@ -124,3 +143,4 @@ jobs:
             ubuntu-desktop.png
             browser-desktop.png
             browser-checks.json
+            live-stream-390.png
