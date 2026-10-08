@@ -167,8 +167,11 @@ with sync_playwright() as p:
             url=args['url']
             if urllib.parse.urlparse(url).scheme not in ('https','http'): raise ValueError('Use an HTTP or HTTPS address')
             # The visible browser keeps its profile on sandbox disk between tasks.
-            return box.execute('DISPLAY=:0 nohup sh -c '+shlex.quote('exec $(command -v chromium || command -v chromium-browser || command -v google-chrome) --no-sandbox --user-data-dir=/workspace/.browser '+shlex.quote(url))+' >/tmp/aether-browser.log 2>&1 & sleep 1; cat /tmp/aether-browser.log | tail -3')
-        return {'ok':True}
+            result=box.execute('DISPLAY=:0 nohup sh -c '+shlex.quote('exec $(command -v chromium || command -v chromium-browser || command -v google-chrome) --no-sandbox --user-data-dir=/workspace/.browser '+shlex.quote(url))+' >/tmp/aether-browser.log 2>&1 & sleep 1; cat /tmp/aether-browser.log | tail -3')
+            if result.get('exit_code')==0: result.update(capture_screen(cu))
+            return result
+        # Observe the action in the same round trip; no extra model screenshot call.
+        return {'ok':True,**capture_screen(cu)}
     raise ValueError('Unknown tool')
 
 def sandbox_state(sandbox_id):

@@ -11,7 +11,8 @@ def api_error(code):
     return cls(code, {'error': {'code': code, 'message': 'private-test-key'}})
 
 
-def test_transient_generation_retries_without_replaying_tool(monkeypatch):
+@pytest.mark.parametrize('code',[503,504])
+def test_transient_generation_retries_without_replaying_tool(monkeypatch,code):
     import time
     from google.genai import types
     from test_api import client, token
@@ -21,7 +22,7 @@ def test_transient_generation_retries_without_replaying_tool(monkeypatch):
         count = 0
         def generate_content(self, **kwargs):
             self.count += 1
-            if self.count in (1,3): raise api_error(503)
+            if self.count in (1,3): raise api_error(code)
             if self.count == 2:
                 part = types.Part(function_call=types.FunctionCall(name='run_shell',args={'command':'echo once'},id='once'))
             else: part = types.Part(text='Done.')
@@ -30,6 +31,7 @@ def test_transient_generation_retries_without_replaying_tool(monkeypatch):
     class Client:
         def __init__(self, **kwargs):
             assert kwargs['http_options'].retry_options.attempts == 1
+            assert kwargs['http_options'].timeout == 180000
             self.models = model
         def close(self): pass
     monkeypatch.setattr(main.genai,'Client',Client)
@@ -145,11 +147,39 @@ def test_manual_terminal_failure_is_safe_and_not_repeated(monkeypatch):
 def test_provider_test_isolates_plain_text_failure(monkeypatch):
     from test_api import client,token
     calls=[]
+    monkeypatch.setattr(main.time,'sleep',lambda seconds:None)
     def generate(**kwargs):calls.append(kwargs);raise api_error(503)
     models=SimpleNamespace(list=lambda:[SimpleNamespace(name='models/gemini-3.8-flash',display_name='Flash',supported_actions=['generateContent'])],generate_content=generate)
     monkeypatch.setattr(main.genai,'Client',lambda **kwargs:SimpleNamespace(models=models,close=lambda:None))
     result=client.post('/provider/test',headers=token(),json={'api_key':'test-not-a-real-key','model':'gemini-3.8-flash'})
-    assert result.status_code==400 and len(calls)==1
+    assert result.status_code==400 and len(calls)==3
     assert calls[0]['config'].tools is None
     assert 'simple text request' in result.json()['detail']
     assert 'private-test-key' not in str(result.json())
+
+
+def test_connection_probe_retries_deadlines_in_both_phases(monkeypatch):
+    from test_api import client,token
+    from google.genai import types
+    options=[];calls=[]
+    monkeypatch.setattr(main.time,'sleep',lambda seconds:None)
+    def generate(**kwargs):
+        calls.append(kwargs)
+        if len(calls) in (1,3):raise api_error(504)
+        return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role='model',parts=[types.Part(text='OK')]))])
+    def make_client(**kwargs):
+        options.append(kwargs['http_options'])
+        models=SimpleNamespace(list=lambda:[SimpleNamespace(name='models/gemini-3.8-flash',supported_actions=['generateContent'])],generate_content=generate)
+        return SimpleNamespace(models=models,close=lambda:None)
+    monkeypatch.setattr(main.genai,'Client',make_client)
+    result=client.post('/provider/test',headers=token(),json={'api_key':'test-not-a-real-key','model':'gemini-3.8-flash'})
+    assert result.status_code==200 and result.json()['model_checked']=='gemini-3.8-flash'
+    assert len(calls)==4 and options[0].timeout==60000 and options[0].retry_options.attempts==1
+    assert calls[0]['config'].tools is None and calls[2]['config'].tools
+    assert 'test-not-a-real-key' not in str(result.json())
+
+
+def test_deadline_message_is_distinct_from_key_rejection():
+    message=main.task_error(api_error(504),'model')
+    assert 'timed out (504)' in message and 'does not mean' in message
+    assert 'private-test-key' not in message

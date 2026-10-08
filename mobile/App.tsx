@@ -45,7 +45,6 @@ import ProfileImage from './components/ProfileImage';
 import StartupScreen from './components/StartupScreen';
 import Sidebar from './components/Sidebar';
 import {agentModels,curateModels,GeminiModel} from './models';
-import LiveComputerPreview from './components/computer/LiveComputerPreview';
 import Onboarding from "./components/Onboarding";
 import SlideSurface from "./components/SlideSurface";
 
@@ -93,7 +92,8 @@ function stateLabel(a?: Agent) {
         : "Ready";
 }
 function eventLabel(e?: TaskEvent) {
-  if (!e) return "Getting ready";
+  if (!e || e.kind==='result' || e.kind==='text') return "Thinking…";
+  if (e.kind==='attention') return 'Waiting for you';
   if (e.kind === "status")
     return e.text?.includes("Waking")
       ? "Starting the computer"
@@ -200,13 +200,15 @@ const MessageView = memo(
     onEdit?:()=>void;
   }) => {
     const user = message.role === "user";
+    const [actionsOpen,setActionsOpen]=useState(false);
     const fileLinks = [
       ...message.text.matchAll(
         /\[[^\]]+\]\((?:sandbox:)?(\/workspace\/[^)]+)\)/g,
       ),
     ];
     return (
-      <View style={[s.message, user && s.userMessage]}>
+      <View style={[s.messageGroup, user && {alignSelf:'flex-end'}]}>
+      <Pressable style={[s.message, user && s.userMessage]} onLongPress={()=>setActionsOpen(true)} onPress={()=>setActionsOpen(v=>!v)} accessibilityRole="button" accessibilityLabel={user?'Your message options':'Response options'} accessibilityHint="Show copy and edit actions">
         {user ? (
           <>
             <Text selectable style={s.messageText}>
@@ -256,7 +258,8 @@ const MessageView = memo(
             ))}
           </>
         )}
-        {message.id>0&&<View style={s.messageActions}>
+      </Pressable>
+        {actionsOpen&&message.id>0&&<View style={s.messageActions}>
           <CopyAction text={message.text} label={user?'Copy your message':'Copy response'}/>
           {onEdit&&<IconButton name="edit" label="Edit last message" onPress={onEdit}/>}
         </View>}
@@ -265,11 +268,12 @@ const MessageView = memo(
   },
 );
 const markdownStyles = StyleSheet.create({
-  body: { color: C.text, fontSize: 16, lineHeight: 25 },
+  body: { color: C.text, fontSize: 16, lineHeight: 23 },
   heading1: { fontSize: 23, fontWeight: "600", marginTop: 16, marginBottom: 8 },
   heading2: { fontSize: 20, fontWeight: "600", marginTop: 14, marginBottom: 8 },
   heading3: { fontSize: 17, fontWeight: "600", marginTop: 12 },
-  paragraph: { marginTop: 0, marginBottom: 12 },
+  paragraph: { marginTop: 0, marginBottom: 0 },
+  textgroup: { marginBottom: 6 },
   code_inline: {
     backgroundColor: C.surface,
     color: C.accent,
@@ -368,6 +372,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     ),
     [computerState, setComputerState] = useState("unknown");
   const list = useRef<FlatList<Message>>(null),
+    followConversation=useRef(true),
     launchTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     selectedRef = useRef(selected),
     refreshVersion = useRef(0),
@@ -550,6 +555,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     }
   }, [selected, token, api, report]);
   useEffect(() => {
+    followConversation.current=true;
     setMessages([]);
     setJob(null);
     setPrompt("");
@@ -660,6 +666,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         ...(editMessage?{edit_message_id:editMessage.id}:{}),
       });
       setSelected(aid);
+      followConversation.current=true;
       setScreen("chat");
       refreshVersion.current++;
       setMessages((m) => [
@@ -919,16 +926,12 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
       ? "Waiting for you to hand control back"
       : eventLabel(
           job?.events
-            ?.filter((e) => e.kind === "status" || e.kind === "tool")
+            ?.filter((e) => ['status','tool','result','text','attention'].includes(e.kind))
             .at(-1),
         );
-  const liveText =
-    job?.status === "running"
-      ? job.events
-          ?.filter((e) => e.kind === "text")
-          .map((e) => e.text)
-          .join("\n")
-      : "";
+  const messageIds=new Set(messages.map(m=>m.id));
+  const liveMessages:Message[]=(job?.events||[]).flatMap((e,i)=>e.kind==='text'&&e.text&&(e.message_id?!messageIds.has(e.message_id):job?.status==='running'||job?.status==='waiting')?[{id:e.message_id||-i-1,role:'assistant',text:e.text}]:[]);
+  const conversationMessages=[...messages,...liveMessages];
   const attention = job?.events?.find((e) => e.kind === "attention");
   const artifactPaths = [
     ...new Set(
@@ -942,12 +945,15 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     <View style={{ flex: 1 }}>
       <FlatList
         ref={list}
-        data={messages}
+        data={conversationMessages}
         keyExtractor={(m) => String(m.id)}
         keyboardShouldPersistTaps="handled"
+        onScroll={({nativeEvent:{contentOffset,contentSize,layoutMeasurement}})=>{followConversation.current=contentSize.height-layoutMeasurement.height-contentOffset.y<80}}
+        scrollEventThrottle={100}
+        onContentSizeChange={()=>{if(followConversation.current)list.current?.scrollToEnd({animated:config.animations&&!reduceMotion})}}
         contentContainerStyle={[
           s.transcript,
-          !messages.length && { flexGrow: 1 },
+          !conversationMessages.length && { flexGrow: 1 },
         ]}
         initialNumToRender={12}
         windowSize={7}
@@ -957,7 +963,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           ) : null
         }
         ListHeaderComponent={
-          messages.length ? (
+          conversationMessages.length ? (
             <Text style={s.dateDivider}>
               Your conversation with {agent?.name}
             </Text>
@@ -1019,18 +1025,6 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         ListFooterComponent={
           agent ? (
             <View>
-              {liveText ? (
-                <MessageView
-                  message={{ id: -1, role: "assistant", text: liveText }}
-                  agent={agent}
-                  onFile={previewFile}
-                />
-              ) : null}
-              {job?.status==='running'&&<View style={{alignItems:'flex-start',paddingVertical:16,gap:6}}>
-                <Avatar shape={agent.shape} material={agent.material} size={64} state={taskState(job)} interactive/>
-                <Text accessibilityLiveRegion="polite" style={s.caption}>{offline?'Reconnecting…':currentAction}</Text>
-              </View>}
-              {job && ['running','waiting'].includes(job.status) && <LiveComputerPreview api={workspaceApi} action={currentAction} onExpand={()=>setScreen('computer')} onControl={async()=>{setScreen('computer');try{await workspaceApi('/workspace/control','POST',{owner:'user'})}catch(e){report(e)}}} />}
               {attention && (
                 <View style={s.attention}>
                   <Icon name="help" color={C.amber} />
@@ -1078,6 +1072,10 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                     </View>
                   </View>
                 )}
+              {job?.status==='running'&&<View accessibilityLabel="Agent working" style={s.workerStatus}>
+                <Avatar shape={agent.shape} material={agent.material} size={30} state={taskState(job)} interactive/>
+                <Text accessibilityLiveRegion="polite" style={s.workerStatusText}>{offline?'Reconnecting…':currentAction}</Text>
+              </View>}
             </View>
           ) : null
         }
@@ -1346,8 +1344,8 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
               {screen!=='home'&&<View style={s.header}>
                 <IconButton round name="back" label={screen==='chat'||screen==='settings'?'Back Home':'Back to conversation'} onPress={()=>setScreen(screen==='computer'?'chat':'home')}/>
                 {screen==='settings'?<Text style={[s.headerTitle,{flex:1,paddingLeft:10}]}>Settings</Text>:<View style={s.headerIdentity}>
-                  {agent&&<Avatar shape={agent.shape} material={agent.material} size={40} interactive state={busy==='upload'?'uploading':busy==='send'?'sending':prompt?'listening':taskState(job)}/>}
-                  <Pressable accessibilityRole="button" accessibilityLabel="Assistant profile" onPress={openProfile} style={{flex:1,minWidth:0}}><Text numberOfLines={1} style={s.headerTitle}>{screen==='computer'?`${agent?.name||'Assistant'}’s computer`:agent?.name||'Your assistant'}</Text></Pressable>
+                  {agent&&<Avatar shape={agent.shape} material={agent.material} size={30} interactive state={busy==='upload'?'uploading':busy==='send'?'sending':prompt?'listening':taskState(job)}/>}
+                  <Pressable accessibilityRole="button" accessibilityLabel="Assistant profile" onPress={openProfile} style={{flexShrink:1,minWidth:0}}><Text numberOfLines={1} style={s.headerTitle}>{screen==='computer'?`${agent?.name||'Assistant'}’s computer`:agent?.name||'Your assistant'}</Text></Pressable>
                 </View>}
                 <IconButton round name={screen==='settings'?'menu':screen==='computer'?'back':'computer'} label={screen==='settings'?'Open sidebar':screen==='computer'?'Open conversation':'Open computer'} onPress={()=>{if(screen==='settings')setAccountMenu(true);else{setComputerExpanded(false);setScreen(screen==='computer'?'chat':'computer')}}}/>
               </View>}

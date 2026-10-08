@@ -22,6 +22,7 @@ export type Agent = {
 export type Message = { id: number; role: string; text: string; created?: number };
 export type TaskEvent = {
   kind: string;
+  message_id?: number;
   text?: string;
   name?: string;
   args?: Record<string, any>;

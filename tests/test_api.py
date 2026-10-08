@@ -50,7 +50,7 @@ def test_agent_loop(monkeypatch):
         if result['status']!='running':break
         time.sleep(.01)
     assert result['status']=='done'
-    assert [e['kind'] for e in result['events']]==['status','status','tool','result','text']
+    assert [e['kind'] for e in result['events']]==['status','status','status','tool','result','text']
     assert client.get('/messages',headers=h).json()[-1]['role']=='assistant'
 def test_libsql_database_adapter(monkeypatch,tmp_path):
     import libsql,database
@@ -254,11 +254,16 @@ def test_four_workers_isolated_and_api_responsive(monkeypatch):
         if key.endswith(agents[0]['id']):raise RuntimeError('isolated failure')
         return Box(key)
     class Models:
-        def generate_content(self,**kw):return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role='model',parts=[types.Part(text='Verified done.')]))])
+        count=0
+        def generate_content(self,**kw):
+            self.count+=1
+            part=types.Part(function_call=types.FunctionCall(name='run_shell',args={'command':'pwd'},id='check')) if self.count==1 else types.Part(text='Verified done.')
+            return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role='model',parts=[part]))])
     class Client:
         def __init__(self,**kw):self.models=Models()
         def close(self):pass
     monkeypatch.setattr(main,'workspace',workspace);monkeypatch.setattr(main.genai,'Client',Client)
+    monkeypatch.setattr(main,'tool',lambda *args:{'output':'/workspace','exit_code':0})
     jobs=[]
     try:
         for a in agents[:4]:

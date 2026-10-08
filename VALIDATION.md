@@ -1,3 +1,13 @@
+# AetherVM 0.4.3 validation — 8 October 2026
+
+- 48 local backend tests passed, including no VM wake for a greeting, progress visible before a command finishes, separate final messages, interrupted-task progress preservation, and screenshot feedback after a desktop click.
+- TypeScript passes. Original character data and animation runtime are unchanged.
+- The CI UI suite checks compact short messages, separate live updates without duplicate restored messages, no automatic desktop start/screen polling in chat, bottom worker size/position, explicit Computer navigation, and message copy/edit. APK and browser QA results are recorded in the associated GitHub Actions run.
+- Performance changes remove unconditional VM/desktop startup and unnecessary screenshot/model turns. These are architectural checks, not live Gemini or Daytona timing measurements.
+- Real provider keys, native Android behavior, and AWS deployment require live verification.
+
+## Previous release checks
+
 # AetherVM 0.4.2 validation — 6 October 2026
 
 ## Completed locally
