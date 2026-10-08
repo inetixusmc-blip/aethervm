@@ -31,7 +31,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A backend mobile deploy qa tests .gitignore README.md DEPLOYMENT.md VALIDATION.md render.yaml
-          git diff --cached --quiet || git commit -m "AetherVM 0.4.3: compact chat, live progress and on-demand computers"
+          git diff --cached --quiet || git commit -m "AetherVM 0.4.4: automatic Vercel AI Gateway support"
           git push
       - uses: actions/setup-node@v4
         with:
@@ -116,3 +116,4 @@ jobs:
         with:
           name: AetherVM-Ubuntu-desktop
           path: ubuntu-desktop.png
+
