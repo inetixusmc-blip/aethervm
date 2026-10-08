@@ -1,5 +1,6 @@
+import {KeyboardAvoidingView,KeyboardAwareScrollView} from 'react-native-keyboard-controller';
 import React,{useContext,useEffect,useRef,useState} from 'react';
-import {View,Text,TextInput,Pressable,ScrollView,ActivityIndicator,Linking,KeyboardAvoidingView,Platform,StyleSheet} from 'react-native';
+import {View,Text,TextInput,Pressable,ScrollView,ActivityIndicator,Linking,Platform,StyleSheet} from 'react-native';
 import AetherCharacter from './character/AetherCharacter';
 import AppearancePicker from './character/AppearancePicker';
 import {CharacterState} from './character/appearance';
@@ -26,9 +27,9 @@ export default function Onboarding({api,initialKey,initialModel,onComplete}:{api
  const finish=async()=>{setBusy(true);setError('');try{await onComplete(verified?key.trim():initialKey,model,agent)}catch(e:any){setError(e.message);setReaction('confused')}finally{setBusy(false)}};
  const demoLines=['Opening browser…','Searching the web…','Reading sources…','Creating report.pdf…','Done ✓'];
  const characterState:CharacterState=step===1?demo<2?'searching':demo<4?'writing':'happy':reaction;
- return <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={{flex:1,backgroundColor:'#111315'}}>
+ return <KeyboardAvoidingView behavior="padding" style={{flex:1,backgroundColor:'#111315'}}>
   <View style={s.header}><Text style={s.brand}>AetherVM</Text><Text style={s.small}>{String(step+1).padStart(2,'0')} / 05</Text></View>
-  <SlideSurface key={step} style={{flex:1}}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
+  <SlideSurface key={step} style={{flex:1}}><KeyboardAwareScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
    <View style={{alignItems:'center',paddingTop:step===1?8:20,paddingBottom:22}}><AetherCharacter shape={agent.shape} material={agent.material} size={step===1?110:step===3?180:200} state={characterState} interactive/></View>
    <Text style={s.title}>{['Your AI just got\na computer.','It works while you\ndo something else.','Bring your\nintelligence.','Make it yours.',`${agent.name.trim()||'Your Aether'} is ready.`][step]}</Text>
    <Text style={s.description}>{['Give it a task. It can browse, code, use files and work inside its own Linux computer.','Watch whenever you want. Take control when it needs you.','Paste a Google Gemini or Vercel AI Gateway key. The provider is detected automatically.','A little digital worker. With a character of its own.','Give it something worth doing.'][step]}</Text>
@@ -37,7 +38,7 @@ export default function Onboarding({api,initialKey,initialModel,onComplete}:{api
    {step===3&&<><AppearancePicker value={agent} onChange={v=>setAgent({...agent,...v})}/><TextInput accessibilityLabel="Aether name" value={agent.name} onChangeText={name=>setAgent({...agent,name})} placeholder="Name your Aether" maxLength={48} placeholderTextColor="#69737D" style={[s.input,{backgroundColor:'#1B1E21',borderRadius:16,fontSize:22,textAlign:'center',marginBottom:20}]} autoCapitalize="words"/><View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>{['General','Researcher','Developer','Creative'].map(role=><Pressable key={role} onPress={()=>{setAgent({...agent,role,instructions:role==='Researcher'?'Research using the visible browser, verify primary sources and summarize clearly.':role==='Developer'?'Build software, test changes and verify results.':role==='Creative'?'Create useful, thoughtful work and verify the finished result.':'Complete useful work, verify results and keep updates concise.'});setReaction(role==='Researcher'?'curious':role==='Developer'?'thinking':'playful')}} style={{backgroundColor:agent.role===role?'#222629':'transparent',paddingVertical:12,paddingHorizontal:15,borderRadius:20}}><Text style={{color:agent.role===role?'#ECEFF1':'#949CA4',fontSize:13}}>{role}</Text></Pressable>)}</View></>}
    {step===4&&<View style={{gap:16,marginTop:10}}>{['Research something for me','Build a small project','Work with my files'].map(t=><Text key={t} style={{color:'#C5CBD0',fontSize:15}}>↗  {t}</Text>)}</View>}
    {!!error&&<Text accessibilityRole="alert" style={{color:'#E7A29E',fontSize:13,lineHeight:21,marginTop:18}}>{error}</Text>}
-  </ScrollView></SlideSurface>
+  </KeyboardAwareScrollView></SlideSurface>
   <View style={s.footer}><Pressable accessibilityRole="button" disabled={busy||(step===3&&!agent.name.trim())||(step===2&&key.trim().length<10)} onPress={()=>step===4?finish():step===2?connect():go(step+1)} style={[s.cta,{opacity:busy?.5:1}]}>{busy?<ActivityIndicator color="#111315"/>:<Text style={s.ctaText}>{['Get started','Continue','Connect →','Meet your Aether','Enter AetherVM'][step]}</Text>}</Pressable><View style={{flexDirection:'row',justifyContent:'space-between',paddingTop:16,minHeight:40}}>{step>0?<Pressable onPress={()=>go(step-1)} disabled={busy}><Text style={s.small}>Back</Text></Pressable>:<View/>}{step===2&&<Pressable onPress={()=>{setKey(initialKey);setModel(initialModel);setVerified(false);go(3)}} disabled={busy}><Text style={s.small}>Set up later</Text></Pressable>}</View></View>
  </KeyboardAvoidingView>;
 }

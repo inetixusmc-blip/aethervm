@@ -217,6 +217,24 @@ def existing_sandbox(sandbox_id):
     box.client=Daytona(); box.box=box.client.get(sandbox_id); box.id=sandbox_id
     return box
 
+def delete_sandbox(sandbox_id):
+    """Delete a recorded computer without ever resuming or provisioning it."""
+    if record_provider(sandbox_id)=='e2b':
+        from e2b import Sandbox
+        from e2b_provider import settings,_cached,_cache_lock,_streams,_stream_lock
+        # kill returns False for an already absent computer; retries are idempotent.
+        Sandbox.kill(sandbox_id.removeprefix('e2b:'),**settings())
+        with _cache_lock:_cached.pop(sandbox_id.removeprefix('e2b:'),None)
+        with _stream_lock:_streams.pop(sandbox_id.removeprefix('e2b:'),None)
+    elif record_provider(sandbox_id)=='daytona':
+        from daytona import Daytona,DaytonaNotFoundError
+        client=Daytona()
+        try:client.delete(client.get(sandbox_id))
+        except DaytonaNotFoundError:pass
+    else:
+        result=subprocess.run(['docker','rm','-f',sandbox_id],capture_output=True,text=True,timeout=30)
+        if result.returncode and 'No such container' not in result.stderr:raise RuntimeError('Computer deletion failed')
+
 def docker_read(self,path):
     r=subprocess.run(['docker','exec',self.id,'python3','-c',f"import sys; sys.stdout.buffer.write(open({path!r},'rb').read())"],capture_output=True,timeout=30,check=True)
     return r.stdout

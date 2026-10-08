@@ -4,11 +4,16 @@ import hashlib
 import os
 import shlex
 import threading
+import secrets
+import time
 from types import SimpleNamespace
 
 TEMPLATE = 'aethervm-ubuntu-24-04-e2b-v1'
 _cached = {}
 _cache_lock = threading.Lock()
+_streams = {}
+_stream_lock = threading.Lock()
+_last_input={}
 
 class E2BConfigurationError(RuntimeError):
     pass
@@ -80,11 +85,83 @@ class E2BSandbox:
         # No connect/resume before pausing. Killed/missing instances remain an explicit error.
         if state(self.raw_id) != 'paused': Sandbox.pause(self.raw_id, **settings())
         with _cache_lock: _cached.pop(self.raw_id, None)
+        with _stream_lock: _streams.pop(self.raw_id, None)
 
     def delete(self):
         from e2b import Sandbox
         Sandbox.kill(self.raw_id, **settings())
         with _cache_lock: _cached.pop(self.raw_id, None)
+        with _stream_lock: _streams.pop(self.raw_id, None)
+
+    def stream(self,reset=False):
+        """Authenticated continuous RFB stream; all input stays on the serialized API.
+
+        Works on existing v1 Ubuntu computers, without rebuilding or replacing files.
+        Never use the SDK's unprotected default VNC server or passwords in URLs.
+        """
+        if self.box is None: raise RuntimeError('Start the computer first')
+        with _stream_lock:
+            if reset:_streams.pop(self.raw_id,None)
+            if self.raw_id in _streams: return _streams[self.raw_id]
+            password=secrets.token_hex(8)
+            self.write_bytes(password.encode(),'/tmp/aether-stream-secret')
+            source="""import os,subprocess,time
+os.chmod('/tmp/aether-stream-secret',0o600)
+secret=open('/tmp/aether-stream-secret').read()
+subprocess.run(['x11vnc','-storepasswd',secret,'/tmp/aether-vnc-passwd'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+os.chmod('/tmp/aether-vnc-passwd',0o600)
+# After API restart rotate authentication; stale viewers must reconnect.
+subprocess.run(['pkill','-x','x11vnc'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+subprocess.run(['pkill','-f','^/usr/bin/python3 /usr/bin/websockify 6080'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+subprocess.Popen(['x11vnc','-display',':0','-rfbauth','/tmp/aether-vnc-passwd','-localhost','-rfbport','5900','-forever','-shared','-viewonly','-nocursor','-wait','16','-noxdamage'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+subprocess.Popen(['/usr/bin/websockify','6080','localhost:5900'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+import socket
+for _ in range(40):
+ try:
+  with socket.create_connection(('127.0.0.1',6080),timeout=.25): break
+ except OSError: time.sleep(.1)
+else: raise RuntimeError('Stream did not start')
+"""
+            result=self.execute('python3 -c '+shlex.quote(source))
+            if result['exit_code']!=0: raise RuntimeError('Live desktop stream unavailable')
+            config={'url':'wss://'+self.box.get_host(6080)+'/websockify', 'password':password[:8], 'width':1280,'height':800}
+            _streams[self.raw_id]=config
+            return config
+
+    def input_activity(self):
+        # Real human input keeps the desktop awake; passive streaming never renews it.
+        if time.monotonic()-_last_input.get(self.raw_id,0)>30:
+            self.box.set_timeout(lifetime());_last_input[self.raw_id]=time.monotonic()
+
+    def pointer(self,action,x=0,y=0,button='left',smooth=False):
+        button_id={'left':1,'middle':2,'right':3}[button]
+        x=max(0,min(1279,int(x))); y=max(0,min(799,int(y)))
+        if smooth:
+            source=f"""import subprocess,time,re
+p=subprocess.check_output(['xdotool','getmouselocation','--shell'],text=True)
+start={{k:int(v) for k,v in re.findall(r'^(X|Y)=(\\d+)$',p,re.M)}}
+for i in range(1,9):
+ t=i/8; t=t*t*(3-2*t)
+ subprocess.run(['xdotool','mousemove',str(round(start['X']+({x}-start['X'])*t)),str(round(start['Y']+({y}-start['Y'])*t))],check=True)
+ time.sleep(.012)
+"""
+            result=self.execute('python3 -c '+shlex.quote(source))
+            if result['exit_code']!=0: raise RuntimeError('Pointer move failed')
+        else: self.box.move_mouse(x,y)
+        if action=='click': self.box.commands.run(f'xdotool click {button_id}')
+        elif action=='down': self.box.mouse_press(button)
+        elif action=='up': self.box.mouse_release(button)
+
+    def clipboard(self,text=None):
+        check=self.execute("python3 -c 'import tkinter' >/dev/null 2>&1 || sudo -n apt-get install -y python3-tk >/dev/null 2>&1")
+        if check['exit_code']!=0:raise RuntimeError('Clipboard service unavailable')
+        source="import tkinter as tk; r=tk.Tk(); r.withdraw(); "
+        if text is None:
+            return self.execute(source+"print(r.clipboard_get()); r.destroy()")['output'].rstrip('\n')
+        # Keep ownership alive long enough for applications to request the selection.
+        self.write_bytes(text.encode(),'/tmp/aether-clipboard-text')
+        source+="r.clipboard_clear(); r.clipboard_append(open('/tmp/aether-clipboard-text').read()); r.after(30000,r.destroy); r.mainloop()"
+        self.box.commands.run('python3 -c '+shlex.quote(source),background=True,timeout=0)
 
     def ensure_display(self):
         if self.box is None: raise RuntimeError('Computer is paused; start it first')
@@ -120,6 +197,6 @@ class E2BSandbox:
                 get_status=lambda:SimpleNamespace(status='running' if self.execute('xdpyinfo -display :0 >/dev/null 2>&1')['exit_code']==0 else 'stopped'),
                 start=self.ensure_display,
                 screenshot=SimpleNamespace(take_full_screen=self.screenshot),
-                mouse=SimpleNamespace(click=lambda x,y:self.box.left_click(x=int(x),y=int(y)),scroll=self.scroll),
+                mouse=SimpleNamespace(click=lambda x,y:self.pointer('click',x,y,smooth=True),scroll=self.scroll),
                 keyboard=SimpleNamespace(type=lambda text:self.box.write(text,chunk_size=100,delay_in_ms=10),press=self.key))
         return self._computer

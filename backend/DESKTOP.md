@@ -89,3 +89,11 @@ SDK contract/unit tests and a disposable Ubuntu Docker smoke run validate the
 adapter and image without cloud credentials. Only `e2b_check.py` on the configured
 server establishes that the account's key, cloud template build, credits and live
 provider work. Public-site bot checks may still require manual user takeover.
+
+## Continuous viewer and direct interaction (0.5.1)
+
+POST /workspace/stream returns an ephemeral VNC password and WSS endpoint only to the authenticated owner of the selected assistant. The VNC server binds to loopback, requires password authentication, and is view-only: all human inputs go through authenticated, serialized API operations. No password is embedded in the URL or stored on the phone. The offline viewer bundles noVNC and loads no third-party script. POST /workspace/stream?reset=true rotates the connection authentication for explicit reconnects. Passive viewing never resumes or extends a paused computer; real input extends its runtime at most once per 30 seconds. Opening the viewer explicitly starts it.
+
+Pointer metadata is a small, scoped event queue; it does not fetch screenshots or invoke a cloud SDK. AI clicks emit coordinates, blue eased motion and click pulses; manual input has a pale cursor. A dropped drag expires and releases the pressed button before an agent action. Keyboard/controller changes need the new APK.
+
+Permanent deletion uses DELETE /agents/{id}?permanent=true. It captures current/previous sandbox IDs, cancels the task, hides the assistant, then deletes each recorded computer without resuming it. Cleanup retries from agent_deletions; no secrets or provider exception bodies are persisted. Old APK DELETE without the parameter retains recoverable archive behavior.

@@ -1,10 +1,19 @@
 import React,{memo,useRef,useContext} from 'react';
-import {View,Text,TextInput,Pressable,ActivityIndicator,Modal,KeyboardAvoidingView,Platform,ScrollView,StyleSheet,useWindowDimensions,Animated} from 'react-native';
+import {View,Text,TextInput,Pressable,ActivityIndicator,Modal,Platform,ScrollView,StyleSheet,useWindowDimensions,Animated} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import Svg,{Path} from 'react-native-svg';
 import {C,s} from './design';
+import {KeyboardAvoidingView,KeyboardAwareScrollView,KeyboardProvider} from 'react-native-keyboard-controller';
 import {MotionContext} from './components/MotionContext';
 const paths: Record<string, string> = {
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+  question: 'M9 8a3.2 3.2 0 1 1 4 3c-1 .5-1 1-1 3M12 18h.01',
+  keyboard: 'M4 6h16v12H4zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M7 14h.01M10 14h6',
+  clipboard: 'M9 5H6a2 2 0 0 0-2 2v13h16V7a2 2 0 0 0-2-2h-3M9 3h6v5H9zM8 12h8M8 16h6',
+  pointer: 'M4 3v17l5-5 4 7 4-2-4-7h8Z',
+  scroll: 'M8 3v14m-4-4 4 4 4-4M16 21V7m-4 4 4-4 4 4',
+  zoom: 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14m5 12 6 6M7 10h6M10 7v6',
+  trackpad: 'M8 4H4v16h16v-5M14 4h6v6',
   home: 'M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7',
   menu: "M4 6.5h16M4 12h12M4 17.5h16",
@@ -279,8 +288,8 @@ export function Sheet({
       animationType={motion ? "slide" : "none"}
       onRequestClose={onClose}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      <KeyboardProvider><KeyboardAvoidingView
+        behavior="padding"
         style={[s.scrim, full && { paddingHorizontal: 0, paddingVertical: 0 }]}
       >
         <Pressable
@@ -309,14 +318,14 @@ export function Sheet({
             </View>
             <IconButton name="close" label="Close" onPress={onClose} />
           </View>
-          <ScrollView
+          <KeyboardAwareScrollView
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={s.sheetContent}
           >
             {children}
-          </ScrollView>
+          </KeyboardAwareScrollView>
         </SafeAreaView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingView></KeyboardProvider>
     </Modal>
   );
 }

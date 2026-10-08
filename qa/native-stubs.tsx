@@ -11,3 +11,5 @@ export const readAsStringAsync=async()=>'';export const writeAsStringAsync=async
 export const isAvailableAsync=async()=>false;export const shareAsync=async()=>{};
 
 export const WebView=()=>null;
+
+export const getStringAsync=async()=>String((window as any).__copied||'');

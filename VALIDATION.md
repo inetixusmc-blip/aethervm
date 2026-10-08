@@ -1,3 +1,10 @@
+## 0.5.1 live desktop verification
+
+- Backend tests cover authenticated cached streams, credentials outside URLs, view-only VNC, agent-scoped input without takeover, drag arbitration, bounded cursor metadata, permanent deletion, busy cancellation, provisioning races and retryable cloud cleanup.
+- Disposable Ubuntu CI starts the exact production VNC bootstrap and authenticates the bundled noVNC client. A changing desktop verifies continuous frames; cursor/click/tap/trackpad and wrong-password checks use this real transport.
+- App type checks, UI flow checks and original character comparisons run before Android release build.
+- Native keyboard animation and mobile gestures still need confirmation on a physical Android device. The CI stream uses a local disposable Ubuntu computer; no user E2B computer is deleted or modified by validation.
+
 ## Backend 0.5.0 — E2B Desktop
 
 - 100 backend tests pass locally, including the pinned E2B SDK signatures, custom Ubuntu 24.04 template definition, command failure output, file/screenshot/input adapters, pause/resume, read-only polling, old-provider ID separation, preservation on failed provisioning, rollback reuse, and bounded non-overwriting file imports.

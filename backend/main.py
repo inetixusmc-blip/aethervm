@@ -25,6 +25,14 @@ capacity=threading.BoundedSemaphore(4)
 locks={}; lock_guard=threading.Lock()
 cancelled={}
 operation_locks={}; control_until={}
+explicit_control=set() # Compatibility for older installed APKs only.
+manual_drag={}
+cursor_events={}; cursor_guard=threading.Lock()
+def cursor_event(key,x,y,kind='move',actor='agent'):
+    with cursor_guard:
+        events=cursor_events.setdefault(key,[])
+        event={'id':events[-1]['id']+1 if events else 1,'x':max(0,min(1279,int(x))),'y':max(0,min(799,int(y))),'kind':kind,'actor':actor}
+        events.append(event); del events[:-80]
 provision_locks={}
 def operation_lock(user):
     with lock_guard: return operation_locks.setdefault(user,threading.Lock())
@@ -35,7 +43,18 @@ def agent_operation(key,job):
         if cancelled[job].is_set(): raise RuntimeError("Task cancelled")
         lock=operation_lock(key)
         lock.acquire()
-        if not user_controls(key): break
+        if not user_controls(key):
+            try:
+                if key in manual_drag:
+                    from sandboxes import existing_sandbox
+                    point=manual_drag.pop(key)
+                    row=workspace_record(key)
+                    if row:
+                        existing_sandbox(row['sandbox']).pointer('up',point['x'],point['y'],point['button'])
+            except Exception:
+                lock.release()
+                raise
+            break
         lock.release()
         cancelled[job].wait(.3)
     try: yield
@@ -51,6 +70,7 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS agent_workspaces(user TEXT,agent_id TEXT,sandbox TEXT,PRIMARY KEY(user,agent_id));
     CREATE TABLE IF NOT EXISTS removed_agents(agent_id TEXT PRIMARY KEY,user TEXT,removed REAL);
     CREATE TABLE IF NOT EXISTS previous_workspaces(user TEXT,agent_id TEXT,sandbox TEXT,created REAL);
+    CREATE TABLE IF NOT EXISTS agent_deletions(agent_id TEXT PRIMARY KEY,user TEXT,sandboxes TEXT,created REAL,error TEXT);
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,user TEXT,role TEXT,text TEXT);
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,user TEXT,status TEXT,events TEXT,error TEXT);''')
     c.executescript("""CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,user TEXT,name TEXT,role TEXT,instructions TEXT,avatar INTEGER,memory TEXT,created REAL);
@@ -75,7 +95,7 @@ class Task(BaseModel):
     agent_id:str|None=None
     edit_message_id:int|None=Field(default=None,ge=1)
 @app.get('/health')
-def health(): return {'ok':True,'provider':os.getenv('SANDBOX_PROVIDER','e2b'),'version':'0.5.0','ai_providers':['gemini','vercel'],'browser_tools_version':2,'gemini_task_timeout_seconds':GEMINI_TASK_TIMEOUT_MS//1000,'gemini_test_timeout_seconds':GEMINI_TEST_TIMEOUT_MS//1000}
+def health(): return {'ok':True,'provider':os.getenv('SANDBOX_PROVIDER','e2b'),'version':'0.5.1','ai_providers':['gemini','vercel'],'browser_tools_version':2,'gemini_task_timeout_seconds':GEMINI_TASK_TIMEOUT_MS//1000,'gemini_test_timeout_seconds':GEMINI_TEST_TIMEOUT_MS//1000}
 @app.post('/auth/google')
 def login(body:Login):
     if os.getenv('DEV_AUTH')=='true' and body.id_token=='local-dev': info={'sub':'local-dev','name':'Developer'}
@@ -305,7 +325,10 @@ def run(job,user,body):
                             waiting_for_user=True
                             output={'waiting_for_user':True}
                         else:
+                            if call.name=='computer_click': cursor_event(key,call.args['x'],call.args['y'],'click')
                             output=tool(box,call.name,dict(call.args or {}))
+                            if output.get('cursor'):
+                                point=output['cursor'];cursor_event(key,point['x'],point['y'],point.get('kind','move'))
                 except Exception as exc:
                     # Provider exception text may contain private request details.
                     output={'error':'The computer action failed. Check the computer connection and retry only if needed.'}
@@ -362,7 +385,9 @@ def task(body:Task,user=Depends(current_user)):
     agent=resolve_agent(user,body.agent_id)
     body.agent_id=agent['id']
     key=scope(user,agent['id'])
-    if user_controls(key): raise HTTPException(409,'Hand computer control back before starting a task')
+    # An explicit new chat turn releases the automatic manual-input pause.
+    if key in explicit_control and user_controls(key):raise HTTPException(409,'Hand computer control back before starting a task')
+    control_until[key]=0
     lock=user_lock(key)
     if not lock.acquire(False): raise HTTPException(409,'This agent is already working')
     if not capacity.acquire(False):
@@ -464,7 +489,7 @@ def resolve_agent(user,agent_id=None):
 
 @app.get('/agents')
 def agents(user=Depends(current_user)):
-    with db() as c: initialized=c.execute('SELECT 1 FROM agents WHERE user=? LIMIT 1',(user,)).fetchone()
+    with db() as c: initialized=c.execute('SELECT 1 FROM agents WHERE user=? UNION SELECT 1 FROM removed_agents WHERE user=? LIMIT 1',(user,user)).fetchone()
     if not initialized: resolve_agent(user)
     with db() as c:
         result=[]
@@ -489,7 +514,8 @@ def create_agent(body:AgentProfile,user=Depends(current_user)):
         save_appearance(c,aid,body)
     return resolve_agent(user,aid)
 @app.delete('/agents/{aid}')
-def remove_agent(aid:str,user=Depends(current_user)):
+def remove_agent(aid:str,permanent:bool=False,user=Depends(current_user)):
+    if permanent: return delete_agent_permanently(aid,user)
     resolve_agent(user,aid)
     key=user+':'+aid
     lock=user_lock(key)
@@ -508,14 +534,77 @@ def remove_agent(aid:str,user=Depends(current_user)):
             return {'ok':True}
         finally: operation_lock(key).release()
     finally: lock.release()
+
+def finish_agent_deletion(aid,user):
+    """Retryable cleanup; preserve the queue if cloud deletion fails."""
+    key=user+':'+aid
+    lock=user_lock(key)
+    if not lock.acquire(False): return False
+    try:
+        with operation_lock(key),provision_file_lock(key):
+            with db() as c: queued=c.execute('SELECT sandboxes FROM agent_deletions WHERE agent_id=? AND user=?',(aid,user)).fetchone()
+            if not queued:return True
+            with db() as c:
+                ids=set(json.loads(queued['sandboxes']))
+                ids.update(r['sandbox'] for r in c.execute('SELECT sandbox FROM agent_workspaces WHERE user=? AND agent_id=? UNION SELECT sandbox FROM previous_workspaces WHERE user=? AND agent_id=?',(user,aid,user,aid)))
+                # A cancelled task may have finished provisioning after deletion was requested.
+                c.execute('UPDATE agent_deletions SET sandboxes=? WHERE agent_id=? AND user=?',(json.dumps(sorted(ids)),aid,user))
+            from sandboxes import delete_sandbox
+            for sid in ids: delete_sandbox(sid)
+            with db() as c:
+                for sid in ids:c.execute('DELETE FROM workspaces WHERE user=? AND sandbox=?',(user,sid))
+                for table in ('messages','jobs','skills','agent_workspaces','previous_workspaces'):
+                    c.execute('DELETE FROM '+table+' WHERE user=? AND agent_id=?',(user,aid))
+                c.execute('DELETE FROM agent_appearance WHERE agent_id=?',(aid,))
+                c.execute('DELETE FROM agents WHERE user=? AND id=?',(user,aid))
+                c.execute('DELETE FROM agent_deletions WHERE agent_id=? AND user=?',(aid,user))
+                # Keep only the ID tombstone: do not recreate Atlas after deleting the last assistant.
+            control_until.pop(key,None)
+            with cursor_guard:cursor_events.pop(key,None)
+            return True
+    except Exception as exc:
+        with db() as c:c.execute('UPDATE agent_deletions SET error=? WHERE agent_id=? AND user=?',('Computer deletion is pending; retrying safely.',aid,user))
+        return False
+    finally: lock.release()
+
+def delete_agent_permanently(aid,user):
+    with db() as c:
+        row=c.execute('SELECT id FROM agents WHERE user=? AND id=?',(user,aid)).fetchone()
+        queued=c.execute('SELECT 1 FROM agent_deletions WHERE user=? AND agent_id=?',(user,aid)).fetchone()
+        if not row and not queued:
+            if c.execute('SELECT 1 FROM removed_agents WHERE user=? AND agent_id=?',(user,aid)).fetchone():return {'ok':True,'deletion':'complete'}
+            raise HTTPException(404,'Assistant not found')
+        # Capture every computer before removing the database mappings.
+        ids={r['sandbox'] for r in c.execute('SELECT sandbox FROM agent_workspaces WHERE user=? AND agent_id=? UNION SELECT sandbox FROM previous_workspaces WHERE user=? AND agent_id=?',(user,aid,user,aid))}
+        legacy=workspace_record(user+':'+aid)
+        if legacy:ids.add(legacy['sandbox'])
+        for job in c.execute("SELECT id FROM jobs WHERE user=? AND agent_id=? AND status='running'",(user,aid)):
+            if job['id'] in cancelled:cancelled[job['id']].set()
+        c.execute('INSERT OR REPLACE INTO removed_agents VALUES(?,?,?)',(aid,user,time.time()))
+        if not queued:c.execute('INSERT INTO agent_deletions VALUES(?,?,?,?,?)',(aid,user,json.dumps(sorted(ids)),time.time(),None))
+    done=finish_agent_deletion(aid,user)
+    return {'ok':True,'deletion':'complete' if done else 'pending'}
+
+def deletion_worker():
+    while True:
+        try:
+            with db() as c:pending=list(c.execute('SELECT agent_id,user FROM agent_deletions'))
+            for row in pending:finish_agent_deletion(row['agent_id'],row['user'])
+        except Exception:pass
+        time.sleep(15)
+
+@app.on_event('startup')
+def start_deletion_worker():
+    if os.getenv('DEV_AUTH')!='true':threading.Thread(target=deletion_worker,daemon=True).start()
 @app.get('/removed-agents')
 def removed_agents(user=Depends(current_user)):
-    with db() as c: return [with_appearance(c,dict(r)) for r in c.execute('SELECT a.* FROM agents a JOIN removed_agents r ON r.agent_id=a.id WHERE a.user=? ORDER BY r.removed DESC',(user,))]
+    with db() as c: return [with_appearance(c,dict(r)) for r in c.execute('SELECT a.* FROM agents a JOIN removed_agents r ON r.agent_id=a.id WHERE a.user=? AND a.id NOT IN (SELECT agent_id FROM agent_deletions) ORDER BY r.removed DESC',(user,))]
 @app.post('/agents/{aid}/restore')
 def restore_agent(aid:str,user=Depends(current_user)):
     with db() as c:
-        row=c.execute('SELECT agent_id FROM removed_agents WHERE user=? AND agent_id=?',(user,aid)).fetchone()
+        row=c.execute('SELECT r.agent_id FROM removed_agents r JOIN agents a ON a.id=r.agent_id WHERE r.user=? AND r.agent_id=?',(user,aid)).fetchone()
         if not row: raise HTTPException(404,'Removed assistant not found')
+        if c.execute('SELECT 1 FROM agent_deletions WHERE user=? AND agent_id=?',(user,aid)).fetchone():raise HTTPException(409,'This assistant is being permanently deleted')
         c.execute('DELETE FROM removed_agents WHERE user=? AND agent_id=?',(user,aid))
     return resolve_agent(user,aid)
 @app.put('/agents/{aid}')
@@ -649,43 +738,92 @@ def control(body:Control,user=Depends(workspace_scope)):
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'The current computer action is finishing. Try again shortly.')
     try:
         control_until[user]=time.time()+45 if body.owner=='user' else 0
+        if body.owner=='user':explicit_control.add(user)
+        else:explicit_control.discard(user)
         return {'control':body.owner}
     finally: operation_lock(user).release()
 class Input(BaseModel):
-    action:str=Field(pattern='^(click|type|key|scroll)$')
+    action:str=Field(pattern='^(click|move|down|up|type|key|scroll)$')
     x:int=Field(default=0,ge=0,le=10000)
     y:int=Field(default=0,ge=0,le=10000)
     text:str=Field(default='',max_length=4000)
     direction:str=Field(default='down',pattern='^(up|down)$')
+    button:str=Field(default='left',pattern='^(left|right|middle)$')
+    amount:int=Field(default=3,ge=1,le=12)
 @app.post('/workspace/input')
 def computer_input(body:Input,user=Depends(workspace_scope)):
     with operation_lock(user):
-        if not user_controls(user): raise HTTPException(409,'Take control of the computer first')
-        cu=computer_box(user).computer()
+        control_until[user]=time.time()+3
+        row=workspace_record(user)
+        if not row:raise HTTPException(409,'Start the computer first')
+        from sandboxes import existing_sandbox
+        box=existing_sandbox(row['sandbox']);cu=box.computer()
         try:
-            if body.action=='click': cu.mouse.click(body.x,body.y)
+            if hasattr(box,'input_activity'):box.input_activity()
+            if body.action in ('click','move','down','up'):
+                if hasattr(box,'pointer'):box.pointer(body.action,body.x,body.y,body.button)
+                elif body.action=='click':cu.mouse.click(body.x,body.y)
+                else:raise HTTPException(501,'Pointer gestures need the E2B desktop provider')
+                cursor_event(user,body.x,body.y,body.action,'user')
+                if body.action=='down':manual_drag[user]={'x':body.x,'y':body.y,'button':body.button}
+                elif body.action=='up':manual_drag.pop(user,None)
+                elif body.action=='move' and user in manual_drag:manual_drag[user].update(x=body.x,y=body.y)
             elif body.action=='type': cu.keyboard.type(body.text)
             elif body.action=='key':
                 from sandboxes import press_key
                 press_key(cu,body.text)
-            else: cu.mouse.scroll(body.x,body.y,body.direction,3)
-            control_until[user]=time.time()+45
+            else: cu.mouse.scroll(body.x,body.y,body.direction,body.amount)
+            control_until[user]=time.time()+(8 if user in manual_drag else 3)
             return {'ok':True}
+        except HTTPException:raise
         except Exception: raise HTTPException(503,'Could not send input to the computer')
 class Command(BaseModel): command:str=Field(min_length=1,max_length=8000)
 @app.post('/workspace/terminal')
 def terminal(body:Command,user=Depends(workspace_scope)):
     if not operation_lock(user).acquire(timeout=2): raise HTTPException(409,'Computer is busy')
     try:
-        if not user_controls(user): raise HTTPException(409,'Take control before running a command')
         control_until[user]=time.time()+120
-        return workspace(user).execute(body.command)
+        result=workspace(user).execute(body.command)
+        control_until[user]=time.time()+3
+        return result
     except HTTPException: raise
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning('Terminal service failed: %s',type(exc).__name__)
         raise HTTPException(503,'The Ubuntu computer could not run this command. Reconnect the computer and retry. This terminal does not use Gemini; the command was not automatically repeated.')
     finally: operation_lock(user).release()
+
+@app.post('/workspace/stream')
+def live_stream(reset:bool=False,user=Depends(workspace_scope)):
+    with operation_lock(user):
+        row=workspace_record(user)
+        from sandboxes import existing_sandbox,record_provider
+        if not row or record_provider(row['sandbox'])!='e2b':raise HTTPException(409,'Start your E2B computer first')
+        try:return existing_sandbox(row['sandbox']).stream(reset=reset)
+        except Exception:raise HTTPException(503,'Live desktop connection failed. Reconnect to restart it.')
+
+@app.get('/workspace/cursor')
+def live_cursor(since:int=0,user=Depends(workspace_scope)):
+    with cursor_guard:return {'events':[e for e in cursor_events.get(user,[]) if e['id']>since]}
+
+class ClipboardText(BaseModel):text:str=Field(max_length=4000)
+@app.get('/workspace/clipboard')
+def read_clipboard(user=Depends(workspace_scope)):
+    with operation_lock(user):
+        box=computer_box(user)
+        if not hasattr(box,'clipboard'):raise HTTPException(501,'Clipboard needs the E2B desktop provider')
+        try:return {'text':box.clipboard()[:4000]}
+        except Exception:raise HTTPException(503,'No text is available in the computer clipboard')
+@app.post('/workspace/clipboard')
+def write_clipboard(body:ClipboardText,user=Depends(workspace_scope)):
+    with operation_lock(user):
+        box=computer_box(user)
+        if not hasattr(box,'clipboard'):raise HTTPException(501,'Clipboard needs the E2B desktop provider')
+        try:
+            control_until[user]=time.time()+3
+            box.clipboard(body.text)
+            return {'ok':True}
+        except Exception:raise HTTPException(503,'Could not update the computer clipboard')
 
 def file_path(path):
     from pathlib import PurePosixPath

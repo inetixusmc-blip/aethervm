@@ -2,6 +2,7 @@ import {C,s} from './design';
 import {Job,Agent,Message,TaskEvent,WorkspaceFile,Skill,Config,Api,Screen} from './types';
 import {Brand,Icon,IconButton,Button,Field,Row,Section,Sheet} from './ui';
 import Computer from './screens/ComputerScreen';
+import {KeyboardAvoidingView,KeyboardProvider,KeyboardAwareScrollView} from 'react-native-keyboard-controller';
 import React, { useCallback, useEffect, useRef, useState, memo } from "react";
 import {
   View,
@@ -12,7 +13,6 @@ import {
   FlatList,
   ScrollView,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Modal,
   Image,
@@ -815,7 +815,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
   const removeAgent=async()=>{
     if(!profile)return;setBusy('remove');
     try{
-      await api('/agents/'+profile.id,'DELETE');
+      await api('/agents/'+profile.id+'?permanent=true','DELETE');
       const items=await refreshAgents();
       if(selected===profile.id)setSelected(items[0]?.id||'');
       setProfile(null);setRemoveConfirm(false);setScreen('home');
@@ -1206,7 +1206,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
     </View>
   );
   const settings = (
-    <ScrollView contentContainerStyle={s.settingsContent}>
+    <KeyboardAwareScrollView contentContainerStyle={s.settingsContent}>
       <Text style={s.pageTitle}>Settings</Text>
       <Section title="ACCOUNT">
         <Row
@@ -1297,13 +1297,13 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         subtitle="Replay the guided setup"
         onPress={() => setOnboarding(true)}
       />
-      <Text style={s.settingsFooter}>AetherVM · Android preview 0.4.4</Text>
-    </ScrollView>
+      <Text style={s.settingsFooter}>AetherVM · Android preview 0.5.1</Text>
+    </KeyboardAwareScrollView>
   );
   if (!ready || !launchReady)
     return <StartupScreen motion={config.animations&&!reduceMotion} onReady={startupReady}/>;
   return (
-    <MotionContext.Provider value={config.animations && !reduceMotion}>
+    <KeyboardProvider><MotionContext.Provider value={config.animations && !reduceMotion}>
       <SafeAreaView style={s.root} edges={["top", "bottom"]}>
         <StatusBar style="light" />
         {!token ? (
@@ -1357,17 +1357,17 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
         ) : (
           <KeyboardAvoidingView
             style={s.app}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior="padding"
           >
 
             <View style={s.main}>
-              {screen!=='home'&&<View style={s.header}>
-                <IconButton round name="back" label={screen==='chat'||screen==='settings'?'Back Home':'Back to conversation'} onPress={()=>setScreen(screen==='computer'?'chat':'home')}/>
+              {screen!=='home'&&screen!=='computer'&&<View style={s.header}>
+                <IconButton round name="back" label="Back Home" onPress={()=>setScreen('home')}/>
                 {screen==='settings'?<Text style={[s.headerTitle,{flex:1,paddingLeft:10}]}>Settings</Text>:<View style={s.headerIdentity}>
                   {agent&&<Avatar shape={agent.shape} material={agent.material} size={30} interactive state={busy==='upload'?'uploading':busy==='send'?'sending':prompt?'listening':taskState(job)}/>}
-                  <Pressable accessibilityRole="button" accessibilityLabel="Assistant profile" onPress={openProfile} style={{flexShrink:1,minWidth:0}}><Text numberOfLines={1} style={s.headerTitle}>{screen==='computer'?`${agent?.name||'Assistant'}’s computer`:agent?.name||'Your assistant'}</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="Assistant profile" onPress={openProfile} style={{flexShrink:1,minWidth:0}}><Text numberOfLines={1} style={s.headerTitle}>{agent?.name||'Your assistant'}</Text></Pressable>
                 </View>}
-                <IconButton round name={screen==='settings'?'menu':screen==='computer'?'back':'computer'} label={screen==='settings'?'Open sidebar':screen==='computer'?'Open conversation':'Open computer'} onPress={()=>{if(screen==='settings')setAccountMenu(true);else{setComputerExpanded(false);setScreen(screen==='computer'?'chat':'computer')}}}/>
+                <IconButton round name={screen==='settings'?'menu':'computer'} label={screen==='settings'?'Open sidebar':'Open computer'} onPress={()=>{if(screen==='settings')setAccountMenu(true);else setScreen('computer')}}/>
               </View>}
               <SlideSurface key={screen} style={{ flex: 1 }} from="right">
                 {screen==='home' ? (
@@ -1375,66 +1375,12 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 ) : screen === "settings" ? (
                   settings
                 ) : screen === "computer" ? (
-                  desktop && !computerExpanded ? (
-                    <View style={{ flex: 1, flexDirection: "row" }}>
-                      <View style={{ flex: 1, minWidth: 0 }}>{chat}</View>
-                      <View
-                        style={{
-                          width: 420,
-                          borderLeftWidth: 1,
-                          borderColor: C.line,
-                        }}
-                      >
-                        <View
-                          style={[
-                            s.inline,
-                            { paddingLeft: 20, paddingRight: 6, height: 54 },
-                          ]}
-                        >
-                          <Text style={[s.smallText, { flex: 1 }]}>
-                            {agent?.name}’s computer
-                          </Text>
-                          <IconButton
-                            name="expand"
-                            label="Expand computer"
-                            onPress={() => setComputerExpanded(true)}
-                          />
-                          <IconButton
-                            name="close"
-                            label="Close computer preview"
-                            onPress={() => setScreen("chat")}
-                          />
-                        </View>
-                        <Computer
-                          agent={agent}
-                          api={workspaceApi}
-                          initialState={computerState}
-                          setComputerState={setComputerState}
-                          report={report}
-                          onFile={previewFile}
-                          animations={config.animations}
-                          activity={
-                            job?.status === "running"
-                              ? currentAction
-                              : undefined
-                          }
-                        />
-                      </View>
-                    </View>
-                  ) : (
-                    <Computer
-                      agent={agent}
-                      api={workspaceApi}
-                      initialState={computerState}
-                      setComputerState={setComputerState}
-                      report={report}
-                      onFile={previewFile}
-                      animations={config.animations}
-                      activity={
-                        job?.status === "running" ? currentAction : undefined
-                      }
-                    />
-                  )
+                  <Computer
+                    agent={agent} api={workspaceApi} initialState={computerState}
+                    setComputerState={setComputerState} report={report} onFile={previewFile}
+                    animations={config.animations} activity={job?.status==='running'?currentAction:undefined}
+                    onBack={()=>setScreen('chat')} onProfile={openProfile}
+                  />
                 ) : (
                   chat
                 )}
@@ -1617,8 +1563,8 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
                 }}
               />
             </Section>
-            <Row icon="trash" title="Remove assistant" subtitle="You can restore it later, including its files." onPress={()=>setRemoveConfirm(true)}/>
-            {removeConfirm&&<View style={{paddingTop:12,gap:8}}><Text style={s.caption}>Remove {profile.name} from your assistants? Its computer will stop and its files will stay available for restore.</Text><Button label="Remove assistant" icon="trash" onPress={removeAgent} loading={busy==='remove'}/><Button label="Keep assistant" secondary onPress={()=>setRemoveConfirm(false)}/></View>}
+            <Row icon="trash" title="Delete assistant" subtitle="Delete this assistant, its conversations and computers." onPress={()=>setRemoveConfirm(true)}/>
+            {removeConfirm&&<View style={{paddingTop:12,gap:8}}><Text style={s.caption}>Permanently delete {profile.name}, its messages, memory, skills and computer files? This cannot be undone.</Text><Button label="Delete assistant" icon="trash" onPress={removeAgent} loading={busy==='remove'}/><Button label="Keep assistant" secondary onPress={()=>setRemoveConfirm(false)}/></View>}
           </Sheet>
         )}
         {skillDraft && (
@@ -1822,7 +1768,7 @@ function WorkspaceApp({ initial }: { initial?: InitialWorkspace } = {}) {
           </Sheet>
         )}
       </SafeAreaView>
-    </MotionContext.Provider>
+    </MotionContext.Provider></KeyboardProvider>
   );
 }
 function decodeText(data: string) {

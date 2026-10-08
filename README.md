@@ -1,3 +1,13 @@
+## Live desktop update · 0.5.1
+
+The Computer screen now uses a continuous, authenticated noVNC/RFB connection instead of fetching PNG screenshots. Tap to use the desktop immediately; manual input pauses agent computer actions briefly and releases automatically. One finger drags, two fingers scroll/right-click, pinch zooms, and the menu offers trackpad mode, files, terminal, sleep and reconnect. The keyboard and clipboard controls sit below the desktop. AI pointer actions use a blue animated cursor and click pulse; character geometry/state data remain unchanged.
+
+Install the 0.5.1 APK and run `sudo bash /opt/aethervm/deploy/aws/update.sh` on the existing AWS deployment. Existing E2B v1 Ubuntu computers and files are reused; the stream bootstrap works on them without a new template or VM migration. No new AWS inbound port is needed: the app uses HTTPS for input and authenticated WSS to E2B for frames.
+
+The new **Delete assistant** action permanently deletes its messages, skills, memory and recorded E2B/Daytona computers after the user confirms. A busy task is cancelled, the assistant disappears immediately, and pending provider cleanup is retained in the database and retried after restart. Archived assistants from older APKs retain the existing restore path.
+
+Viewer transport: [noVNC](https://github.com/novnc/noVNC), pinned 1.5.0, MPL-2.0 (license bundled). Keyboard animation: [react-native-keyboard-controller](https://github.com/kirillzyusko/react-native-keyboard-controller), Expo-compatible 1.18.5. Cursor/gesture integration is AetherVM code. Screenshots remain available to the AI for visual reasoning; they are separate from the live viewer transport.
+
 # AetherVM
 
 Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gemini and Vercel AI Gateway use real function calls to execute commands, write/read files, and browse with Playwright in isolated Linux sandboxes. No simulated task results.
@@ -84,11 +94,11 @@ EAS needs your Expo account and available build quota. When Google Android OAuth
 
 ## App features
 
-- Restrained dark interface with a persistent agent roster, focused conversation and dedicated Computer surface on mobile. Wider screens can expand the computer beside the conversation.
+- Restrained dark interface with a persistent agent roster, focused conversation and dedicated Computer surface on mobile. The computer opens only when requested.
 - Create and edit named agents with roles, instructions, avatars and persistent memory. Each agent has separate conversations and task history; each agent owns its computer.
 - Google identity verified on the server; ownership checked on every private endpoint.
 - Markdown responses, copyable code, rounded conversation bubbles, copyable user/assistant messages, editable last turns, and explicit waiting/error/cancelled states.
-- E2B desktop screenshots, visible browser controls, mouse/keyboard actions, and exclusive manual/agent control. A disconnected manual-control lease expires automatically.
+- Continuous E2B desktop streaming, direct mouse/keyboard gestures, and an automatic brief pause while the user interacts.
 - Navigate workspace folders, preview and export files, and attach files up to 4 MB. Bounded terminal commands expose real output and exit status.
 - Gemini or Vercel AI Gateway key stored in Android SecureStore, connection testing and available-model selection. Keys remain transient on the backend, outside the database.
 - Saved skills become agent instructions. Scheduled runs are clearly unavailable in this version.

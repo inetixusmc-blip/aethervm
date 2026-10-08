@@ -153,7 +153,15 @@ def run_action(action, args):
                     if args.get('submit'): element.press('Enter')
             elif action == 'browser_key': page.keyboard.press(str(args.get('key', 'Enter')))
             elif action != 'browser_read': return failure('action_failed')
-            return read_page(page)
+            result=read_page(page)
+            if action in ('browser_click','browser_type'):
+                import subprocess,re
+                try:
+                    position=subprocess.check_output(['xdotool','getmouselocation','--shell'],text=True)
+                    coords={k:int(v) for k,v in re.findall(r'^(X|Y)=(\d+)$',position,re.M)}
+                    result['cursor']={'x':coords['X'],'y':coords['Y'],'kind':'click' if action=='browser_click' else 'move'}
+                except Exception:pass
+            return result
             # Do not close the persistent browser. Leaving Playwright disconnects.
     except Exception as exc:
         code = error_category(exc)
