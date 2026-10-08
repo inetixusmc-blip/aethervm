@@ -2,6 +2,8 @@
 
 Android AI workspace app: React Native/Expo client + Python/FastAPI backend. Gemini and Vercel AI Gateway use real function calls to execute commands, write/read files, and browse with Playwright in isolated Linux sandboxes. No simulated task results.
 
+Backend 0.4.5 fixes browser startup and page reading; the Android 0.4.4 APK remains compatible. The visible browser uses the installed Playwright Chromium with a persistent per-computer profile, returns rendered page text/links and fresh controls, and supports reading, clicking and filling search fields. Headless reading waits for rendering and reports empty pages, HTTP/network/TLS errors and human verification explicitly. TLS checks remain enabled. The worker stops certificate failures immediately and repeated browser-environment failures after one alternative attempt. It asks for user review of verification pages rather than cycling through browser and curl calls. This update needs only the API rebuild, not a new Daytona snapshot or computer migration.
+
 ## Status
 
 The 0.4.4 preview adds automatic Gemini/Vercel AI Gateway key detection in Settings and onboarding. Gateway provides a small selection of Claude, GPT and Gemini models with function tools and image input, filtered against its live model metadata. Connection testing makes actual authenticated text and tool requests; public model listing alone does not validate a Gateway key. Unknown key prefixes and mismatched provider/model IDs are rejected without probing another service. Keys stay in SecureStore and transient backend memory. Gateway credit, access, quota and timeout errors have provider-specific messages.

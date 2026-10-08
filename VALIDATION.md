@@ -1,5 +1,9 @@
 # AetherVM 0.4.3 validation — 8 October 2026
 
+## Backend 0.4.5 browsing fix
+
+86 backend tests pass locally. New tests cover explicit empty/malformed browser output, bounded JSON responses, input/URL quoting, typed errors without exception leaks, page-content waiting, screenshot delivery, stopping repeated browser failures and human-verification handoff. The Ubuntu CI image runs real headless and visible Chromium checks: delayed rendering, content/links, search submission, observed link clicks, stale references, cross-call reconnect, empty/HTTP/challenge failures, rejection of an untrusted TLS certificate, and verified public HTTPS navigation. CI outcomes are recorded in the build run. These checks do not prove access to Google or a particular website from the user's live Daytona computer. No provider keys are used in browser smoke checks. Mobile 0.4.4 remains compatible.
+
 - 48 local backend tests passed, including no VM wake for a greeting, progress visible before a command finishes, separate final messages, interrupted-task progress preservation, and screenshot feedback after a desktop click.
 - TypeScript passes. Original character data and animation runtime are unchanged.
 - The CI UI suite checks compact short messages, separate live updates without duplicate restored messages, no automatic desktop start/screen polling in chat, bottom worker size/position, explicit Computer navigation, and message copy/edit. APK and browser QA results are recorded in the associated GitHub Actions run.

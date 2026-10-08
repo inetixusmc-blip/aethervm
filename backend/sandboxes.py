@@ -54,7 +54,7 @@ class DaytonaSandbox:
         if result.exit_code!=0: raise RuntimeError('Workspace directory is unavailable')
     def execute(self, command):
         r = self.box.process.exec('timeout -k 5 60 bash -lc ' + shlex.quote('cd /workspace && '+command), timeout=70)
-        return {'exit_code':r.exit_code, 'output':r.result[:24000]}
+        return {'exit_code':r.exit_code, 'output':(r.result or '')[:24000]}
     def computer(self): return self.box.computer_use
     def read_bytes(self,path): return self.box.fs.download_file(path)
     def write_bytes(self,data,path): return self.box.fs.upload_file(data,path)
@@ -141,20 +141,30 @@ def tool(box, name, args):
         return box.execute(python_command(source))
     if name == 'read_file':
         return box.execute(python_command(f"from pathlib import Path; print(Path({args['path']!r}).read_text()[:24000])"))
-    if name == 'browse':
-        # Chromium executes only inside the sandbox, including any downloaded page content.
-        source = f'''from playwright.sync_api import sync_playwright
-with sync_playwright() as p:
- b=p.chromium.launch(headless=True,args=['--no-sandbox'])
- page=b.new_page()
- page.goto({args['url']!r},wait_until='domcontentloaded',timeout=30000)
- print('TITLE:',page.title())
- print('URL:',page.url)
- print(page.locator('body').inner_text()[:20000])
- b.close()
-'''
-        return box.execute(python_command(source))
-    if name.startswith('computer_') or name=='browser_open':
+    if name == 'browse' or name.startswith('browser_'):
+        from pathlib import Path
+        visible = name != 'browse'
+        if visible:
+            if not hasattr(box,'computer'): return {'ok':False,'error_code':'browser_start_failed','error':'Visible browser unavailable for this computer provider.'}
+            start_desktop(box)
+        # The code and every visited page execute in this agent's own sandbox.
+        source = Path(__file__).with_name('browser_tools.py').read_text()
+        source += '\nprint(encode_result(run_action('+repr(name)+', json.loads('+repr(json.dumps(args))+'))))\n'
+        execution = box.execute(python_command(source))
+        from browser_tools import failure
+        if execution.get('exit_code') != 0:
+            result = failure('browser_start_failed')
+        else:
+            try:
+                result = json.loads(execution.get('output',''))
+                if not isinstance(result,dict) or not isinstance(result.get('ok'),bool): raise ValueError('Invalid browser response')
+            except (ValueError,TypeError): result = failure('empty_page')
+        if visible:
+            # Images use the desktop SDK, outside the bounded shell-output channel.
+            try: result.update(capture_screen(box.computer()))
+            except Exception: result['screen_unavailable']=True
+        return result
+    if name.startswith('computer_'):
         if not hasattr(box,'computer'): return {'error':'Desktop tools unavailable for this provider'}
         start_desktop(box); cu=box.computer()
         if name=='computer_screenshot':
@@ -162,14 +172,6 @@ with sync_playwright() as p:
         if name=='computer_click': cu.mouse.click(int(args['x']),int(args['y']))
         elif name=='computer_type': cu.keyboard.type(args['text'])
         elif name=='computer_key': press_key(cu,args['key'])
-        elif name=='browser_open':
-            import urllib.parse
-            url=args['url']
-            if urllib.parse.urlparse(url).scheme not in ('https','http'): raise ValueError('Use an HTTP or HTTPS address')
-            # The visible browser keeps its profile on sandbox disk between tasks.
-            result=box.execute('DISPLAY=:0 nohup sh -c '+shlex.quote('exec $(command -v chromium || command -v chromium-browser || command -v google-chrome) --no-sandbox --user-data-dir=/workspace/.browser '+shlex.quote(url))+' >/tmp/aether-browser.log 2>&1 & sleep 1; cat /tmp/aether-browser.log | tail -3')
-            if result.get('exit_code')==0: result.update(capture_screen(cu))
-            return result
         # Observe the action in the same round trip; no extra model screenshot call.
         return {'ok':True,**capture_screen(cu)}
     raise ValueError('Unknown tool')
