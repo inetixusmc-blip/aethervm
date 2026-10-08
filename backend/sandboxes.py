@@ -142,16 +142,13 @@ def tool(box, name, args):
     if name == 'read_file':
         return box.execute(python_command(f"from pathlib import Path; print(Path({args['path']!r}).read_text()[:24000])"))
     if name == 'browse' or name.startswith('browser_'):
-        from pathlib import Path
+        from browser_tools import browser_command,failure
         visible = name != 'browse'
         if visible:
             if not hasattr(box,'computer'): return {'ok':False,'error_code':'browser_start_failed','error':'Visible browser unavailable for this computer provider.'}
             start_desktop(box)
         # The code and every visited page execute in this agent's own sandbox.
-        source = Path(__file__).with_name('browser_tools.py').read_text()
-        source += '\nprint(encode_result(run_action('+repr(name)+', json.loads('+repr(json.dumps(args))+'))))\n'
-        execution = box.execute(python_command(source))
-        from browser_tools import failure
+        execution = box.execute(browser_command(name,args))
         if execution.get('exit_code') != 0:
             result = failure('browser_start_failed')
         else:

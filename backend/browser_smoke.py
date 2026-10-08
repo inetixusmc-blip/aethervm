@@ -6,7 +6,14 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from browser_tools import run_action
+from browser_tools import browser_command
+
+def run_action(action,args):
+    # Match DaytonaSandbox.execute: login shell, then its bounded output channel.
+    command='cd /workspace && '+browser_command(action,args)
+    result=subprocess.run(['bash','-lc',command],capture_output=True,text=True,timeout=60)
+    assert result.returncode==0, (action,result.stderr[-300:])
+    return json.loads(result.stdout[:24000])
 
 class Fixture(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -66,8 +73,8 @@ with tempfile.TemporaryDirectory() as directory:
     checks.append('untrusted TLS certificates are rejected')
     tls.shutdown()
 
-live=check('public HTTPS navigation with verified certificates',run_action('browse',{'url':'https://example.com'}))
-assert 'Example Domain' in live['text']
+live=check('public HTTPS navigation with verified certificates',run_action('browse',{'url':'https://www.python.org/'}))
+assert 'python' in live['title'].lower() and 'python' in live['text'].lower(), {k:live.get(k) for k in ('url','title','text')}
 Path('/workspace/browser-checks.json').write_text(json.dumps(checks,indent=2))
 subprocess.run(['scrot','/workspace/browser-desktop.png'],check=True)
 print('Browser checks passed:',len(checks),'; rendered text, visible search/click, persistent reconnect, failures and TLS.')

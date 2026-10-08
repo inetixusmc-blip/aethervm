@@ -6,6 +6,7 @@ TLS verification stays enabled. Browser failures return categories, not traces.
 import json
 import os
 import subprocess
+import shlex
 import time
 import re
 import uuid
@@ -168,3 +169,16 @@ def encode_result(result):
         elif result.get('elements'): result['elements'].pop()
         else: break
     return json.dumps(result, ensure_ascii=False)
+
+def browser_command(action, args):
+    """Build a sandbox-only command that survives Ubuntu login-shell PATH resets."""
+    source=Path(__file__).read_text()
+    source+='\nprint(encode_result(run_action('+repr(action)+', json.loads('+repr(json.dumps(args))+'))))\n'
+    bootstrap="""import os,sys
+python='/home/daytona/.venv/bin/python3'
+if not os.path.isfile(python): python=sys.executable
+cache='/home/daytona/.cache/ms-playwright'
+if os.path.isdir(cache): os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH',cache)
+os.execv(python,[python,'-c',SOURCE])
+""".replace('SOURCE',repr(source))
+    return 'python3 -c '+shlex.quote(bootstrap)
