@@ -118,6 +118,7 @@ subprocess.Popen(['/usr/bin/websockify','6080','localhost:5900'],stdin=subproces
 import socket
 for _ in range(40):
  try:
+  with socket.create_connection(('127.0.0.1',5900),timeout=.25): pass
   with socket.create_connection(('127.0.0.1',6080),timeout=.25): break
  except OSError: time.sleep(.1)
 else: raise RuntimeError('Stream did not start')

@@ -164,7 +164,7 @@ await p.getByRole('button',{name:'Done',exact:true}).click(); // Save without te
 await p.getByText('Vercel AI Gateway',{exact:true}).click();
 await p.getByLabel('Replace API key',{exact:true}).fill('AIza-ui-fixture-not-real');
 await p.getByText('Google Gemini',{exact:true}).waitFor();
-assert.equal(await p.getByText('Claude Sonnet 5.5',{exact:true}).count(),0);
+await p.getByText('Claude Sonnet 5.5',{exact:true}).waitFor({state:'hidden'});
 await p.getByRole('button',{name:'Done',exact:true}).click();
 // New-user setup also detects Gateway before the connection test.
 await p.goto('file://'+root+'/preview.html?scenario=onboarding');
