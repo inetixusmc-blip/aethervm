@@ -772,7 +772,9 @@ def computer_input(body:Input,user=Depends(workspace_scope)):
             elif body.action=='key':
                 from sandboxes import press_key
                 press_key(cu,body.text)
-            else: cu.mouse.scroll(body.x,body.y,body.direction,body.amount)
+            else:
+                if hasattr(box,'manual_scroll'):box.manual_scroll(body.x,body.y,body.direction,body.amount)
+                else:cu.mouse.scroll(body.x,body.y,body.direction,body.amount)
             control_until[user]=time.time()+(8 if user in manual_drag else 3)
             return {'ok':True}
         except HTTPException:raise
