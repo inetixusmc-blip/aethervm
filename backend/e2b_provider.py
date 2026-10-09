@@ -148,10 +148,24 @@ for i in range(1,9):
 """
             result=self.execute('python3 -c '+shlex.quote(source))
             if result['exit_code']!=0: raise RuntimeError('Pointer move failed')
-        else: self.box.move_mouse(x,y)
-        if action=='click': self.box.commands.run(f'xdotool click {button_id}')
+        else:
+            # Human input must not use the SDK's mousemove --sync: it can wait
+            # for an X motion event at an already unchanged position. Send the
+            # move and button together in one cloud command, without animation.
+            command=f'xdotool mousemove {x} {y}'
+            if action=='click': command+=f' click --clearmodifiers {button_id}'
+            elif action=='down': command+=f' mousedown {button_id}'
+            elif action=='up': command+=f' mouseup {button_id}'
+            self.box.commands.run(command,envs={'DISPLAY':':0'})
+            return
+        if action=='click': self.box.commands.run(f'xdotool click {button_id}',envs={'DISPLAY':':0'})
         elif action=='down': self.box.mouse_press(button)
         elif action=='up': self.box.mouse_release(button)
+
+    def manual_scroll(self,x,y,direction,amount):
+        x=max(0,min(1279,int(x)));y=max(0,min(799,int(y)))
+        wheel=4 if direction=='up' else 5
+        self.box.commands.run(f'xdotool mousemove {x} {y} click --delay 0 --repeat {int(amount)} {wheel}',envs={'DISPLAY':':0'})
 
     def clipboard(self,text=None):
         check=self.execute("python3 -c 'import tkinter' >/dev/null 2>&1 || sudo -n apt-get install -y python3-tk >/dev/null 2>&1")
