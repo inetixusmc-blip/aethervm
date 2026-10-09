@@ -45,6 +45,18 @@ def test_missing_key_never_creates_computer(monkeypatch):
     monkeypatch.setattr(e2b_desktop.Sandbox,'create',lambda **kw:pytest.fail('must not create'))
     with pytest.raises(adapter.E2BConfigurationError):adapter.E2BSandbox('user')
 
+@pytest.mark.parametrize('action,suffix',[('move',''),('click',' click --clearmodifiers 1'),('down',' mousedown 1'),('up',' mouseup 1')])
+def test_manual_pointer_one_remote_call_without_motion_wait(sdk,action,suffix):
+    box=adapter.E2BSandbox('user');calls,remote,files,status=sdk
+    calls.clear()
+    box.pointer(action,12,34)
+    assert calls==[('run','xdotool mousemove 12 34'+suffix,{'envs':{'DISPLAY':':0'}})]
+
+def test_manual_scroll_has_no_sdk_repeat_delay(sdk):
+    box=adapter.E2BSandbox('user');calls,remote,files,status=sdk
+    calls.clear();box.manual_scroll(12,34,'down',6)
+    assert calls==[('run','xdotool mousemove 12 34 click --delay 0 --repeat 6 5',{'envs':{'DISPLAY':':0'}})]
+
 def test_file_roundtrip_screen_and_input(sdk):
     box=adapter.E2BSandbox('user');calls,remote,files,status=sdk
     box.write_bytes(b'unchanged','/workspace/test');assert box.read_bytes('/workspace/test')==b'unchanged'
